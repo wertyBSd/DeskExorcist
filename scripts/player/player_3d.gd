@@ -55,9 +55,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and _mouse_captured:
 		_look(event.relative)
 		return
-	if event.is_action_pressed(&"pause"):
-		_set_mouse_captured(not _mouse_captured)
-		return
+	# Esc is owned by PauseMenu (ROADMAP 1.3): it now freezes the run instead of
+	# merely toggling mouse capture.
 	if event.is_action_pressed(&"attack") and _auto_weapon != null:
 		_fire_auto_weapon()
 	_handle_spell_input(event)

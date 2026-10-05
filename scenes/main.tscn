@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/game.gd" id="1_game"]
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
 [ext_resource type="Script" path="res://scripts/ui/level_up_screen.gd" id="5_levelup"]
 [ext_resource type="Script" path="res://scripts/core/level_builder.gd" id="6_level"]
+[ext_resource type="Script" path="res://scripts/ui/pause_menu.gd" id="7_pause"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -38,4 +39,7 @@ script = ExtResource("4_hud")
 
 [node name="LevelUpScreen" type="CanvasLayer" parent="."]
 script = ExtResource("5_levelup")
+
+[node name="PauseMenu" type="CanvasLayer" parent="."]
+script = ExtResource("7_pause")
 

@@ -16,6 +16,9 @@ var _player: Player
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	layer = 5
+	# PauseMenu checks this group so Esc never stacks a pause menu on top of an
+	# open card choice (both would fight over get_tree().paused).
+	add_to_group("level_up_screen")
 	_build()
 	visible = false
 

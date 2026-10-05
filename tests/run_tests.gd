@@ -17,6 +17,7 @@ func _ready() -> void:
 	_test_level_design()
 	_test_main_scene_wiring()
 	_test_charge_indicator()
+	_test_pause_menu()
 	_test_models()
 	_test_balance()
 	print("=== RESULT: %d passed, %d failed ===" % [_passed, _failed])
@@ -191,6 +192,25 @@ func _test_charge_indicator() -> void:
 	player.free()
 	remove_child(hud)
 	hud.free()
+
+## Stage 1.3 (ROADMAP): the pause menu must exist as a node in main.tscn, freeze
+## the tree while open, and release it again on close.
+func _test_pause_menu() -> void:
+	var scene: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(scene)
+	var menu := scene.get_node_or_null("PauseMenu")
+	_check(menu != null, "main.tscn contains a PauseMenu node")
+	if menu != null and menu is PauseMenu:
+		_check(not menu.is_open(), "pause menu hidden at start")
+		menu.open()
+		_check(menu.is_open(), "open() shows the pause menu")
+		_check(get_tree().paused, "open() freezes the tree")
+		menu.close()
+		_check(not menu.is_open(), "close() hides the pause menu")
+		_check(not get_tree().paused, "close() resumes the tree")
+	remove_child(scene)
+	scene.free()
+	get_tree().paused = false
 
 ## Blender model pipeline (BlenderInstruction.MD): every exported .glb must
 ## exist, load, and carry real mesh geometry through the loader.
