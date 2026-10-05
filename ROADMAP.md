@@ -57,13 +57,14 @@
 
 Цель: игра запускается в редакторе, играбельна от начала до конца, тесты гоняются одной командой. Без этого всё остальное не имеет смысла.
 
-### 1.1 Подключить `LevelBuilder` в главную сцену — P0
-- [ ] Добавить узел `Level` (Node3D + `scripts/core/level_builder.gd`) в `scenes/main.tscn`.
-- [ ] `game.gd` уже ищет `get_node_or_null("Level")` — проверить, что `_build_level()` строит пол и ставит игрока на `player_spawn`.
-- [ ] Решить судьбу статических `Floor`/`Walls` в `main.tscn`: удалить или оставить как внешний «короб» вокруг карты.
-- [ ] Спавнить `NPCDialog` в точках `npc_points` при `LevelBuilder.build()`.
-- [ ] Проверить, что спавнер демонов берёт точки из `LevelBuilder.random_edge_position()` (код есть, но без узла Level не используется).
-- [ ] Тест: `main.tscn` содержит узел `Level`, и он непустой после `_ready`.
+### 1.1 Подключить `LevelBuilder` в главную сцену — P0 ✅ ВЫПОЛНЕНО
+- [x] Добавлен узел `Level` (Node3D + `scripts/core/level_builder.gd`) в `scenes/main.tscn`.
+- [x] `game.gd._build_level()` строит пол и ставит игрока на `player_spawn` (проверено тестом).
+- [x] Статические `Floor`/`Walls` и их sub-ресурсы **удалены** — `LevelBuilder._build_floor()` строит идентичную арену 40×28 (не дублируем геометрию).
+- [x] `NPCDialog` спавнится в точках `npc_points` внутри `LevelBuilder.build()` (2–4 NPC на карту).
+- [x] Спавнер демонов берёт точки из `LevelBuilder.random_edge_position()` через группу `level`.
+- [x] Тест `_test_main_scene_wiring`: `main.tscn` содержит непустой `Level` (38 блоков, 30 spawn-клеток, 2 NPC) — PASS.
+- **Итог прогона:** `godot --headless` → **79 passed, 0 failed**.
 
 ### 1.2 UI-индикатор зарядки (ChargeCircle) — P0
 - [ ] GDD §4 требует прогресс зарядки над головой/вокруг персонажа. `player_3d.gd` эмитит `charge_changed(ratio)`, но HUD его не слушает.
@@ -87,7 +88,7 @@
 - [x] Проверен `.gitignore` (`.godot/`, `export_presets.cfg`, `build/` и т.п. игнорируются).
 - [x] Поставлен baseline-тег `v0.0.1-baseline` (аннотированный).
 
-> ✅ Осталось на Этапе 1: пункты 1.1 (LevelBuilder в main.tscn), 1.2 (индикатор зарядки), 1.3 (пауза/рестарт), 1.4 (единый запуск тестов).
+> ✅ Осталось на Этапе 1: пункты 1.2 (индикатор зарядки), 1.3 (пауза/рестарт), 1.4 (единый запуск тестов). Пункт 1.1 закрыт.
 
 ---
 

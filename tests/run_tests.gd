@@ -15,6 +15,7 @@ func _ready() -> void:
 	_test_enemy_archetypes()
 	_test_upgrade_pool()
 	_test_level_design()
+	_test_main_scene_wiring()
 	_test_models()
 	_test_balance()
 	print("=== RESULT: %d passed, %d failed ===" % [_passed, _failed])
@@ -149,6 +150,24 @@ func _test_level_design() -> void:
 
 		remove_child(level)
 		level.free()
+
+## Stage 1.1 wiring (ROADMAP): the main scene must carry a LevelBuilder node so
+## Game._build_level() actually raises one of the three GDD floors instead of
+## running on the old flat fallback arena.
+func _test_main_scene_wiring() -> void:
+	var scene: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(scene)
+	var level := scene.get_node_or_null("Level")
+	_check(level != null, "main.tscn contains a Level node")
+	_check(level is LevelBuilder, "Level node uses the LevelBuilder script")
+	if level is LevelBuilder:
+		# Game._ready() already ran _build_level(), so the floor is populated.
+		_check(level.get_child_count() > 0, "Level built geometry on scene ready")
+		_check(level.block_count > 0, "Level placed wall blocks (%d)" % level.block_count)
+		_check(level.spawn_cells.size() > 0, "Level exposes ground spawn cells (%d)" % level.spawn_cells.size())
+		_check(level.npc_count > 0, "Level spawned survivor NPCs (%d)" % level.npc_count)
+	remove_child(scene)
+	scene.free()
 
 ## Blender model pipeline (BlenderInstruction.MD): every exported .glb must
 ## exist, load, and carry real mesh geometry through the loader.
