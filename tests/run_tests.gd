@@ -16,6 +16,7 @@ func _ready() -> void:
 	_test_upgrade_pool()
 	_test_level_design()
 	_test_main_scene_wiring()
+	_test_charge_indicator()
 	_test_models()
 	_test_balance()
 	print("=== RESULT: %d passed, %d failed ===" % [_passed, _failed])
@@ -168,6 +169,28 @@ func _test_main_scene_wiring() -> void:
 		_check(level.npc_count > 0, "Level spawned survivor NPCs (%d)" % level.npc_count)
 	remove_child(scene)
 	scene.free()
+
+## Stage 1.2 (ROADMAP): the HUD must listen to the player's `charge_changed`
+## signal and mirror the 0..1 charge into a visible indicator.
+func _test_charge_indicator() -> void:
+	var hud := HUD.new()
+	add_child(hud)
+	var player: Player = load("res://scenes/player.tscn").instantiate()
+	add_child(player)
+	hud.bind(player, null)
+	_check(hud.get_charge_ratio() == 0.0, "HUD charge starts at 0")
+	_check(not hud.is_charge_visible(), "charge indicator hidden when idle")
+	player.charge_changed.emit(0.5)
+	_check(is_equal_approx(hud.get_charge_ratio(), 0.5), "charge_changed(0.5) updates HUD")
+	_check(hud.is_charge_visible(), "charge indicator visible while charging")
+	player.charge_changed.emit(1.0)
+	_check(is_equal_approx(hud.get_charge_ratio(), 1.0), "full charge reaches 1.0")
+	player.charge_changed.emit(0.0)
+	_check(not hud.is_charge_visible(), "charge indicator hides on release (0.0)")
+	remove_child(player)
+	player.free()
+	remove_child(hud)
+	hud.free()
 
 ## Blender model pipeline (BlenderInstruction.MD): every exported .glb must
 ## exist, load, and carry real mesh geometry through the loader.

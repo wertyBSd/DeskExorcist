@@ -16,6 +16,8 @@ var _slots: Array[Control] = []
 var _player: Player
 var _game: Game
 var _dialog_label: Label
+var _charge_bar: ProgressBar
+var _charge_ratio: float = 0.0
 
 func _ready() -> void:
 	layer = 1
@@ -24,8 +26,19 @@ func _ready() -> void:
 
 ## Called by Game once both nodes exist.
 func bind(p_player: Player, p_game: Game) -> void:
-	_player = p_player
+	_bind_player(p_player)
 	_game = p_game
+
+## Attaches to the player's charge signal exactly once, even though the HUD also
+## re-discovers the player every frame from the "player" group.
+func _bind_player(p_player: Player) -> void:
+	if _player == p_player:
+		return
+	if _player != null and _player.charge_changed.is_connected(_on_charge_changed):
+		_player.charge_changed.disconnect(_on_charge_changed)
+	_player = p_player
+	if _player != null and not _player.charge_changed.is_connected(_on_charge_changed):
+		_player.charge_changed.connect(_on_charge_changed)
 
 func _build() -> void:
 	_root = Control.new()
@@ -47,6 +60,11 @@ func _build() -> void:
 	_dialog_label.add_theme_color_override("font_color", Color("#ffe9a8"))
 	_dialog_label.position = Vector2(360, 600)
 	_root.add_child(_dialog_label)
+
+	# Charge indicator (GDD section 4): a centred bar that fills while a spell is
+	# held (0..1) and hides the moment the cast is released or interrupted.
+	_charge_bar = _make_bar(Color("#ffd166"), Vector2(440, 586), Vector2(400, 16))
+	_charge_bar.visible = false
 
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 6)
@@ -94,7 +112,7 @@ func _make_slot(slot: int) -> Control:
 
 func _process(_delta: float) -> void:
 	if _player == null:
-		_player = EffectUtil.player(get_tree()) as Player
+		_bind_player(EffectUtil.player(get_tree()) as Player)
 	if _game == null:
 		var games := get_tree().get_nodes_in_group("game")
 		if not games.is_empty():
@@ -116,6 +134,21 @@ func _refresh() -> void:
 			var overlay := holder.get_meta("overlay") as ColorRect
 			if overlay != null:
 				overlay.color.a = _player.cooldown_ratio(id)
+
+## Mirrors the player's Hold & Release charge (0..1) onto the on-screen bar.
+func _on_charge_changed(ratio: float) -> void:
+	_charge_ratio = clampf(ratio, 0.0, 1.0)
+	if _charge_bar != null:
+		_charge_bar.value = _charge_ratio
+		_charge_bar.visible = _charge_ratio > 0.0
+
+## Current charge fill shown by the indicator (0..1); exposed for tests.
+func get_charge_ratio() -> float:
+	return _charge_ratio
+
+## True while the charge indicator is on screen.
+func is_charge_visible() -> bool:
+	return _charge_bar != null and _charge_bar.visible
 
 ## Called by a nearby NPCDialog when the player walks into its trigger sphere.
 func show_dialog(text: String) -> void:
