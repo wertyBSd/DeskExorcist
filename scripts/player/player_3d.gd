@@ -126,9 +126,15 @@ func _fire_auto_weapon() -> void:
 	if _auto_weapon.has_method("fire"):
 		_auto_weapon.call("fire", _aim_point())
 
+## Camera look.  Sensitivity comes from the Settings autoload (ROADMAP Stage 4)
+## and falls back to the GameConfig constant when Settings is absent (tests).
 func _look(relative: Vector2) -> void:
-	rotate_y(-relative.x * GameConfig.MOUSE_SENSITIVITY)
-	_camera.rotate_x(-relative.y * GameConfig.MOUSE_SENSITIVITY)
+	var sens := GameConfig.MOUSE_SENSITIVITY
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		sens = settings.mouse_sensitivity
+	rotate_y(-relative.x * sens)
+	_camera.rotate_x(-relative.y * sens)
 	_camera.rotation.x = clampf(_camera.rotation.x, -PI * 0.5, PI * 0.5)
 
 func _set_mouse_captured(captured: bool) -> void:

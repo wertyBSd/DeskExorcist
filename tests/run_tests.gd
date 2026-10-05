@@ -26,6 +26,10 @@ func _ready() -> void:
 	_test_stage3_polish()
 	_test_arena_content()
 	_test_stage3_vfx()
+	_test_stage4_audio_settings()
+	_test_stage4_main_menu()
+	_test_stage4_meta()
+	_test_stage4_project()
 	print("=== RESULT: %d passed, %d failed ===" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
 
@@ -409,4 +413,76 @@ func _test_stage3_vfx() -> void:
 	_check(hud.is_shaking(), "shake starts the screen shake timer")
 	remove_child(hud)
 	hud.free()
+
+
+## Stage 4 (P3) - audio plumbing: Settings owns the five bus volumes and the
+## SoundManager stub counts cues without touching real audio files.
+func _test_stage4_audio_settings() -> void:
+	_check(Settings.BUSES.size() == 5, "Settings declares 5 audio buses")
+	_check(Settings.BUSES.has(&"Music") and Settings.BUSES.has(&"SFX"), "Settings has Music + SFX buses")
+	Settings.master_volume = 0.5
+	Settings.apply_all()
+	var master_idx := AudioServer.get_bus_index(&"Master")
+	_check(master_idx >= 0, "Master bus exists after apply_all")
+	_check(is_equal_approx(db_to_linear(AudioServer.get_bus_volume_db(master_idx)), 0.5), "Master volume round-trips to 0.5")
+	Settings.master_volume = 1.0
+	Settings.apply_all()
+
+	SoundManager.play(&"test_cue")
+	SoundManager.play(&"test_cue")
+	_check(SoundManager.play_count(&"test_cue") == 2, "SoundManager counts repeated cues")
+	_check(SoundManager.play_count(&"never_played") == 0, "unknown cue count is 0")
+	SoundManager.play_music(&"battle")
+	_check(SoundManager.music_key() == &"battle", "play_music remembers the key")
+	SoundManager.stop_music()
+	_check(SoundManager.music_key() == &"", "stop_music clears the key")
+	_check(AudioServer.get_bus_index(&"Music") >= 0, "Music bus created by the stub")
+
+## Stage 4 (P3) - the main menu is the new entry scene and reaches the run scene,
+## the settings overlay and quit.
+func _test_stage4_main_menu() -> void:
+	var menu_scene: Node = load("res://scenes/main_menu.tscn").instantiate()
+	add_child(menu_scene)
+	# Duck-typed: the class_name global cache may be stale in a fresh headless run.
+	_check(menu_scene.has_method("is_settings_open"), "main_menu.tscn uses the MainMenu script")
+	_check(menu_scene.get_node_or_null("SettingsScreen") != null, "main menu embeds a SettingsScreen")
+	_check(menu_scene.get("RUN_SCENE") == "res://scenes/main.tscn", "Start targets the run scene")
+	_check(not menu_scene.is_settings_open(), "settings closed at start")
+	menu_scene._on_settings()
+	_check(menu_scene.is_settings_open(), "_on_settings() opens the overlay")
+	menu_scene.get_node("SettingsScreen").close()
+	remove_child(menu_scene)
+	menu_scene.free()
+
+	var screen: Node = load("res://scripts/ui/settings_screen.gd").new()
+	add_child(screen)
+	_check(screen.get("RESOLUTIONS").size() >= 3, "settings screen offers >=3 resolutions")
+	_check(not screen.visible, "settings screen hidden on ready")
+	screen.open()
+	_check(screen.visible, "open() shows the settings screen")
+	screen.close()
+	_check(not screen.visible, "close() hides the settings screen")
+	remove_child(screen)
+	screen.free()
+
+## Stage 4 (P3) - meta progression persists unlocked spells between runs.
+func _test_stage4_meta() -> void:
+	_check(Meta.unlocked_count() >= 3, "at least the 3 starter spells are unlocked")
+	_check(Meta.is_unlocked(1) and Meta.is_unlocked(2) and Meta.is_unlocked(3), "spells 1-3 unlocked by default")
+	Meta.reset()
+	_check(not Meta.is_unlocked(7), "spell 7 locked before unlock")
+	Meta.unlock_spell(7)
+	_check(Meta.is_unlocked(7), "unlock_spell() unlocks spell 7")
+	Meta.unlock_spell(7)
+	_check(Meta.unlocked_count() == 4, "re-unlocking does not duplicate")
+	Meta.reset()
+	_check(Meta.unlocked_count() == 3, "reset() restores the default loadout")
+
+## Stage 4: the new main scene and autoloads are registered in project.godot.
+func _test_stage4_project() -> void:
+	var main_scene: String = ProjectSettings.get_setting("application/run/main_scene", "")
+	_check(main_scene == "res://scenes/main_menu.tscn", "main scene is main_menu.tscn")
+	_check(ProjectSettings.has_setting("autoload/Meta"), "Meta autoload registered")
+	_check(ProjectSettings.has_setting("autoload/Settings"), "Settings autoload registered")
+	_check(ProjectSettings.has_setting("autoload/SoundManager"), "SoundManager autoload registered")
 

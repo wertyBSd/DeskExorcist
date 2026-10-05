@@ -14,7 +14,7 @@
 "C:\Program Files\Godot\Godot.exe" --path c:\research\games\Shooter
 ```
 
-Главная сцена: `res://scenes/main.tscn`.
+Главная сцена: `res://scenes/main_menu.tscn` (меню → Старт грузит `res://scenes/main.tscn`).
 
 ## Тесты
 
