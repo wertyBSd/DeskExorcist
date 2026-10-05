@@ -23,6 +23,7 @@ func _ready() -> void:
 	mouse_exited.connect(_on_hover_end)
 	pressed.connect(_on_pressed)
 	pivot_offset = BASE_SIZE * 0.5
+	EffectUtil.sound(get_tree(), &"ui_card_reveal")
 	# Fly-in animation: rise from below with a fade and a grow.
 	modulate.a = 0.0
 	scale = Vector2(0.5, 0.5)
@@ -62,6 +63,7 @@ func _build_visuals() -> void:
 	box.add_child(desc)
 
 func _on_hover_start() -> void:
+	EffectUtil.sound(get_tree(), &"ui_hover")
 	var tween := create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(self, "scale", Vector2(1.05, 1.05), 0.12)
@@ -74,4 +76,5 @@ func _on_hover_end() -> void:
 	tween.tween_property(self, "rotation_degrees", 0.0, 0.12)
 
 func _on_pressed() -> void:
+	EffectUtil.sound(get_tree(), &"ui_card_pick")
 	chosen.emit(card)

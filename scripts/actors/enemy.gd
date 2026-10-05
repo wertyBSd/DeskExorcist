@@ -171,6 +171,7 @@ func _fire(delta: float, dir: Vector3) -> void:
 		return
 	var bolt := Projectile.new()
 	var origin := global_position + Vector3.UP * 0.9
+	EffectUtil.sound(get_tree(), &"bolt_fire", origin)
 	bolt.setup(origin, dir, GameConfig.PROJECTILE_SPEED * 0.6, WRAITH_DAMAGE, true)
 	host.add_child(bolt)
 

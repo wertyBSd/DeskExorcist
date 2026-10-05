@@ -68,6 +68,7 @@ func toggle() -> void:
 func open() -> void:
 	if visible:
 		return
+	EffectUtil.sound(get_tree(), &"ui_pause")
 	get_tree().paused = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	visible = true
@@ -76,6 +77,7 @@ func open() -> void:
 func close() -> void:
 	if not visible:
 		return
+	EffectUtil.sound(get_tree(), &"ui_pause")
 	visible = false
 	get_tree().paused = false
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED

@@ -50,6 +50,7 @@ func _acquire_player() -> void:
 	_player = list[0] if not list.is_empty() else null
 
 func _collect() -> void:
+	EffectUtil.sound(get_tree(), &"soul_pickup", global_position)
 	var games := get_tree().get_nodes_in_group("game")
 	if not games.is_empty() and games[0].has_method("add_xp"):
 		games[0].call("add_xp", xp_value)

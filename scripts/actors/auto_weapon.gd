@@ -22,6 +22,7 @@ func fire(aim_point: Vector3) -> void:
 	if _cooldown > 0.0:
 		return
 	_cooldown = FIRE_COOLDOWN
+	EffectUtil.sound(get_tree(), &"bolt_fire", global_position)
 	var origin := global_position
 	var dir := aim_point - origin
 	if dir.length() <= 0.001:

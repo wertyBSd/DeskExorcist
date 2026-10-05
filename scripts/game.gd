@@ -73,6 +73,7 @@ func add_xp(amount: float) -> void:
 		level += 1
 		xp_to_next = roundf(xp_to_next * XP_GROWTH)
 		_pending_levels += 1
+		EffectUtil.sound(get_tree(), &"level_up")
 		level_gained.emit(level)
 	_open_level_up_if_needed()
 

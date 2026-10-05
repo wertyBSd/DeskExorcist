@@ -77,3 +77,32 @@ static func hitmarker(tree: SceneTree) -> void:
 	for h in tree.get_nodes_in_group("hud"):
 		if h.has_method("flash_hitmarker"):
 			h.call("flash_hitmarker")
+
+## Plays a one-shot cue through the SoundManager autoload.  Null-safe: isolated
+## test scenes and the headless suite run without the autoload present.
+static func sound(tree: SceneTree, key: StringName, position: Vector3 = Vector3.INF) -> void:
+	var sm := _sound_manager(tree)
+	if sm != null and sm.has_method("play"):
+		sm.call("play", key, position)
+
+## Starts or switches the looping music track through the SoundManager autoload.
+static func music(tree: SceneTree, key: StringName) -> void:
+	var sm := _sound_manager(tree)
+	if sm != null and sm.has_method("play_music"):
+		sm.call("play_music", key)
+
+## Plays the cast cue for a GDD spell id (1..9, 0).  No-op when that spell has no
+## dedicated file yet, so callers never have to check.
+static func spell_cast(tree: SceneTree, spell_id: int, position: Vector3 = Vector3.INF) -> void:
+	var sm := _sound_manager(tree)
+	if sm == null or not sm.has_method("spell_cast_key"):
+		return
+	var key: StringName = sm.call("spell_cast_key", spell_id)
+	if key != &"" and sm.has_method("play"):
+		sm.call("play", key, position)
+
+## The SoundManager autoload node, or null when it is not registered.
+static func _sound_manager(tree: SceneTree) -> Node:
+	if tree == null or tree.root == null:
+		return null
+	return tree.root.get_node_or_null("SoundManager")

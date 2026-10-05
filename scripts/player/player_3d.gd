@@ -40,6 +40,10 @@ var _mouse_captured: bool = true
 var _anim: AnimationPlayer = null
 var _anim_state: String = ""
 
+## Footstep / landing bookkeeping for the audio cues (ROADMAP Stage 4).
+var _was_on_floor: bool = true
+var _step_timer: float = 0.0
+
 func _ready() -> void:
 	add_to_group("player")
 	spells = SpellLibrary.build_all()
@@ -82,6 +86,7 @@ func _start_charging(slot: int) -> void:
 		return
 	_charging_slot = slot
 	_charge_timer = 0.0
+	EffectUtil.sound(get_tree(), &"player_charge_start", global_position)
 
 func _release_charging() -> void:
 	var slot := _charging_slot
@@ -92,12 +97,15 @@ func _release_charging() -> void:
 		return
 	# Below full charge the spell fizzles and costs no cooldown.
 	if _charge_timer < spell.charge_time:
+		EffectUtil.sound(get_tree(), &"player_fizzle", global_position)
 		return
 	# Casting the ultimate spends the whole soul gauge.
 	if spell.spell_id == 0:
 		soul_gauge = 0.0
 	_cooldowns[spell.spell_id] = spell.effective_cooldown()
 	spell.cast_effect(global_position, _aim_point(), get_tree())
+	EffectUtil.spell_cast(get_tree(), spell.spell_id, global_position)
+	EffectUtil.sound(get_tree(), &"player_cast_release", global_position)
 	# One-shot release flourish, then back to the locomotion clips.
 	if _anim != null and _anim.has_animation(PlayerAnimation.CAST_RELEASE):
 		_anim_state = PlayerAnimation.CAST_RELEASE
@@ -157,7 +165,18 @@ func _physics_process(delta: float) -> void:
 	_apply_gravity(delta)
 	_apply_movement()
 	move_and_slide()
+	_tick_footsteps(delta)
 	_update_animation()
+
+## Emits a footstep cue at a fixed cadence while running on the floor.
+func _tick_footsteps(delta: float) -> void:
+	if not is_on_floor() or Vector2(velocity.x, velocity.z).length() <= 0.1:
+		_step_timer = 0.0
+		return
+	_step_timer -= delta
+	if _step_timer <= 0.0:
+		_step_timer = 0.4
+		EffectUtil.sound(get_tree(), &"player_footstep", global_position)
 
 ## Picks the clip that matches the current state (BlenderInstruction section 4):
 ## cast_hold while a spell is charged, run while moving, idle otherwise.
@@ -184,11 +203,16 @@ func _apply_gravity(delta: float) -> void:
 	if is_on_floor():
 		# Grounded: jump if asked, otherwise cancel any residual vertical velocity
 		# so the capsule cannot drift upward (mirrors enemy.gd).
+		if not _was_on_floor:
+			EffectUtil.sound(get_tree(), &"player_land", global_position)
+		_was_on_floor = true
 		if Input.is_action_just_pressed(&"jump") and not _is_rooted():
 			velocity.y = GameConfig.JUMP_VELOCITY
+			EffectUtil.sound(get_tree(), &"player_jump", global_position)
 		else:
 			velocity.y = 0.0
 	else:
+		_was_on_floor = false
 		velocity.y -= gravity * delta
 
 func _apply_movement() -> void:
@@ -252,12 +276,14 @@ func take_damage(amount: float, _source: Vector3 = Vector3.INF) -> void:
 		return
 	health = maxf(0.0, health - amount)
 	_interrupt_charge()
+	EffectUtil.sound(get_tree(), &"player_hurt", global_position)
 	health_changed.emit(health, max_health)
 	# Screen shake on every hit (ROADMAP Stage 3 VFX).
 	for h in get_tree().get_nodes_in_group("hud"):
 		if h.has_method("shake"):
 			h.call("shake")
 	if health <= 0.0:
+		EffectUtil.sound(get_tree(), &"player_death", global_position)
 		died.emit()
 
 ## Restores HP, clamped to the current maximum (Pride's lifesteal).

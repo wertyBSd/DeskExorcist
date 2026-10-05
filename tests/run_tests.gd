@@ -437,6 +437,12 @@ func _test_stage4_audio_settings() -> void:
 	SoundManager.stop_music()
 	_check(SoundManager.music_key() == &"", "stop_music clears the key")
 	_check(AudioServer.get_bus_index(&"Music") >= 0, "Music bus created by the stub")
+	# Stage 4 wiring: every cue key now maps to a real res://sound/ file.
+	_check(SoundManager.has_cue(&"bolt_fire"), "bolt_fire cue is mapped to a real file")
+	_check(SoundManager.has_cue(&"player_hurt"), "player_hurt cue is mapped")
+	_check(SoundManager.has_cue(&"ui_click"), "ui_click cue is mapped")
+	_check(SoundManager.spell_cast_key(1) == &"spell_01_cast", "spell 1 maps to its cast cue")
+	_check(SoundManager.spell_cast_key(6) == &"", "spell 6 (unsupported .aiff) has no cue key")
 
 ## Stage 4 (P3) - the main menu is the new entry scene and reaches the run scene,
 ## the settings overlay and quit.

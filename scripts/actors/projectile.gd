@@ -63,6 +63,7 @@ func _check_hits() -> void:
 					return
 				if p.has_method("take_damage"):
 					p.call("take_damage", damage, global_position)
+				EffectUtil.sound(get_tree(), &"bolt_impact", global_position)
 				queue_free()
 				return
 	else:
@@ -70,6 +71,7 @@ func _check_hits() -> void:
 			if e is Node3D and (e as Node3D).global_position.distance_to(global_position) <= HIT_RADIUS:
 				EffectUtil.damage(e, damage, global_position)
 				EffectUtil.hitmarker(get_tree())
+				EffectUtil.sound(get_tree(), &"bolt_impact", global_position)
 				queue_free()
 				return
 
@@ -85,4 +87,5 @@ func _try_reflect(p: Node) -> bool:
 	global_position += velocity.normalized() * (HIT_RADIUS + 0.1)
 	_life = 0.0
 	_apply_colour()
+	EffectUtil.sound(get_tree(), &"bolt_reflect", global_position)
 	return true

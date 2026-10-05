@@ -77,7 +77,15 @@ func _button(text: String, handler: Callable) -> Button:
 	b.text = text
 	b.custom_minimum_size = Vector2(300, 52)
 	b.pressed.connect(handler)
+	b.pressed.connect(_play_click)
+	b.mouse_entered.connect(_play_hover)
 	return b
+
+func _play_click() -> void:
+	EffectUtil.sound(get_tree(), &"ui_click")
+
+func _play_hover() -> void:
+	EffectUtil.sound(get_tree(), &"ui_hover")
 
 ## Loads the run scene (Start button / start_requested consumers).
 func _on_start() -> void:
