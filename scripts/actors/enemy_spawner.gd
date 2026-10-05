@@ -65,10 +65,22 @@ func _spawn_one() -> void:
 		portal.global_position = pos
 		return
 	var demon := Enemy.new()
-	# Later in the run the tanky water coolers become more common.
-	demon.configure(Enemy.Kind.WATER_COOLER if randf() < 0.15 + _pressure * 0.35 else Enemy.Kind.PAPERWORK_PHANTOM)
+	demon.configure(_pick_kind())
 	host.add_child(demon)
 	demon.global_position = pos
+
+## Chooses the archetype for the next spawn.  Later in the run the tanky water
+## coolers and the ranged email wraiths both become more common.
+func _pick_kind() -> Enemy.Kind:
+	var roll := randf()
+	var cooler_share := 0.15 + _pressure * 0.35
+	if roll < cooler_share:
+		return Enemy.Kind.WATER_COOLER
+	# A small, pressure-scaled slice of ranged demons from the mid-game on.
+	var wraith_share := 0.05 + _pressure * 0.20
+	if roll < cooler_share + wraith_share:
+		return Enemy.Kind.EMAIL_WRAITH
+	return Enemy.Kind.PAPERWORK_PHANTOM
 
 ## Picks a spawn point on the outer ring of open tiles using the level's own
 ## grid, so demons never appear inside a wall or a pillar.  Falls back to a

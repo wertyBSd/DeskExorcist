@@ -12,6 +12,7 @@ var from_enemy := false
 
 var _life := 0.0
 var _mesh: MeshInstance3D = null
+var _mat: StandardMaterial3D = null
 var _spawn_origin := Vector3.ZERO
 
 ## Configures the bolt.  Call before adding it to the tree; the spawn origin is
@@ -30,13 +31,21 @@ func _ready() -> void:
 	sphere.radius = 0.12
 	sphere.height = 0.24
 	_mesh.mesh = sphere
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color("#a03cff") if from_enemy else Color("#ffe9a8")
-	mat.emission_enabled = true
-	mat.emission = mat.albedo_color
-	mat.emission_energy_multiplier = 2.0
-	_mesh.material_override = mat
+	_mat = StandardMaterial3D.new()
+	_mat.emission_enabled = true
+	_mat.emission_energy_multiplier = 2.0
+	_apply_colour()
+	_mesh.material_override = _mat
 	add_child(_mesh)
+
+## Tints the bolt gold for the player and violet for a demon; re-used when an
+## enemy bolt is reflected back on its sender (GDD spell 9).
+func _apply_colour() -> void:
+	if _mat == null:
+		return
+	var c := Color("#a03cff") if from_enemy else Color("#ffe9a8")
+	_mat.albedo_color = c
+	_mat.emission = c
 
 func _physics_process(delta: float) -> void:
 	global_position += velocity * delta
@@ -50,6 +59,8 @@ func _check_hits() -> void:
 	if from_enemy:
 		for p in get_tree().get_nodes_in_group("player"):
 			if p is Node3D and (p as Node3D).global_position.distance_to(global_position) <= HIT_RADIUS:
+				if _try_reflect(p):
+					return
 				if p.has_method("take_damage"):
 					p.call("take_damage", damage, global_position)
 				queue_free()
@@ -60,3 +71,17 @@ func _check_hits() -> void:
 				EffectUtil.damage(e, damage, global_position)
 				queue_free()
 				return
+
+## Mirror of the Soul (GDD spell 9): if the caster has the dome up, the demon
+## bolt is turned back on its sender rather than hurting the player. Returns
+## true when the bolt was reflected (the caller must not free it).
+func _try_reflect(p: Node) -> bool:
+	if not p.has_method("is_shielded") or not p.call("is_shielded"):
+		return false
+	from_enemy = false
+	velocity = -velocity
+	# Step the bolt clear of the hit radius so it does not re-trigger next frame.
+	global_position += velocity.normalized() * (HIT_RADIUS + 0.1)
+	_life = 0.0
+	_apply_colour()
+	return true

@@ -19,6 +19,9 @@ func _ready() -> void:
 	_test_charge_indicator()
 	_test_pause_menu()
 	_test_models()
+	_test_spell_gdd()
+	_test_ranged_demon()
+	_test_npc_dialog()
 	_test_balance()
 	print("=== RESULT: %d passed, %d failed ===" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -230,6 +233,91 @@ func _test_models() -> void:
 			var meshes := inst.find_children("*", "MeshInstance3D", true, false)
 			_check(meshes.size() > 0, "%s carries mesh geometry (%d)" % [label, meshes.size()])
 			inst.free()
+
+## Stage 2.1 (ROADMAP): lock the spell parameters against GDD section 3 and the
+## three mechanics that were only verified by code inspection before.
+func _test_spell_gdd() -> void:
+	var spells := SpellLibrary.build_all()
+	var by_id := {}
+	for s in spells:
+		by_id[s.spell_id] = s
+	# Charge times and cooldowns straight from the GDD table.
+	_check(is_equal_approx(by_id[1].charge_time, 0.8) and is_equal_approx(by_id[1].cooldown, 3.0), "spell 1 charge/CD = 0.8/3")
+	_check(is_equal_approx(by_id[2].charge_time, 1.2) and is_equal_approx(by_id[2].cooldown, 6.0), "spell 2 charge/CD = 1.2/6")
+	_check(is_equal_approx(by_id[3].charge_time, 1.5) and is_equal_approx(by_id[3].cooldown, 12.0), "spell 3 charge/CD = 1.5/12")
+	_check(is_equal_approx(by_id[8].charge_time, 0.4) and is_equal_approx(by_id[8].cooldown, 4.0), "spell 8 charge/CD = 0.4/4")
+	_check(is_equal_approx(by_id[9].charge_time, 1.0) and is_equal_approx(by_id[9].cooldown, 10.0), "spell 9 charge/CD = 1.0/10")
+	_check(is_equal_approx(by_id[0].charge_time, 3.5) and is_equal_approx(by_id[0].cooldown, 0.0), "ultimate charge/CD = 3.5/reset")
+	# GDD radii mapped from px at the project's 30 px = 1 m port scale.
+	_check(is_equal_approx(by_id[1].radius, 5.0), "spell 1 radius 150px -> 5 m")
+	_check(is_equal_approx(by_id[2].radius, 6.5), "spell 2 radius 200px -> 6.5 m")
+	_check(is_equal_approx(by_id[3].radius, 3.5), "spell 3 radius 100px -> 3.5 m")
+	_check(is_equal_approx(by_id[5].radius, 4.0), "spell 5 radius 120px -> 4 m")
+	_check(is_equal_approx(by_id[9].radius, 4.0), "spell 9 radius 120px -> 4 m")
+	# Chain lightning jumps to five extra enemies.
+	_check(SpellLibrary.ChainLightning.MAX_JUMPS == 5, "chain lightning jumps to 5")
+	# Holy Step blink distance 250 px -> 8 m.
+	_check(is_equal_approx(SpellLibrary.HolyStep.DISTANCE, 8.0), "holy step blink = 8 m")
+	# Mirror of the Soul reflection is wired into projectile.gd.
+	var bolt := Projectile.new()
+	add_child(bolt)
+	var fake := _FakeShielded.new()
+	add_child(fake)
+	bolt.from_enemy = true
+	bolt.velocity = Vector3(1.0, 0.0, 0.0)
+	_check(bolt._try_reflect(fake), "enemy bolt reflects off a shielded caster")
+	_check(bolt.from_enemy == false, "reflected bolt becomes friendly")
+	_check(bolt.velocity.x < 0.0, "reflected bolt reverses direction")
+	remove_child(bolt)
+	bolt.free()
+	remove_child(fake)
+	fake.free()
+
+## Minimal stand-in for a shielded player used by the reflection check.
+class _FakeShielded extends Node:
+	func is_shielded() -> bool:
+		return true
+
+## Stage 2.2 (ROADMAP): the third archetype is a ranged demon that fires hex
+## bolts and keeps its distance; the spawner can pick it.
+func _test_ranged_demon() -> void:
+	var w := Enemy.new()
+	w.configure(Enemy.Kind.EMAIL_WRAITH)
+	add_child(w)
+	_check(w.max_health == 40.0, "email wraith HP = 40")
+	_check(w.xp_value == 2.0, "email wraith XP = 2")
+	_check(Enemy.Kind.size() >= 3, "enemy Kind has a third archetype")
+	remove_child(w)
+	w.free()
+	# The spawner picks a valid archetype for a range of pressures.
+	var spawner := EnemySpawner.new()
+	add_child(spawner)
+	var saw_wraith := false
+	for i in 200:
+		if spawner._pick_kind() == Enemy.Kind.EMAIL_WRAITH:
+			saw_wraith = true
+			break
+	_check(saw_wraith, "spawner can pick the ranged wraith")
+	remove_child(spawner)
+	spawner.free()
+
+## Stage 2.3 (ROADMAP): a survivor NPC trigger pushes its line to the HUD and
+## clears it when the player leaves.
+func _test_npc_dialog() -> void:
+	var hud := HUD.new()
+	add_child(hud)
+	var npc := NPCDialog.new()
+	add_child(npc)
+	_check(not npc.line.is_empty(), "NPC picked a survivor line")
+	# The NPC talks to the HUD through the "hud" group.
+	get_tree().call_group("hud", "show_dialog", npc.line)
+	_check(hud._dialog_label.text == npc.line, "HUD shows the survivor line")
+	get_tree().call_group("hud", "clear_dialog")
+	_check(hud._dialog_label.text == "", "HUD clears the line")
+	remove_child(npc)
+	npc.free()
+	remove_child(hud)
+	hud.free()
 
 func _test_balance() -> void:
 	var dps := 10.0 / 0.25

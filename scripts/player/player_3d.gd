@@ -231,6 +231,35 @@ func heal(amount: float) -> void:
 func grant_shield(duration: float) -> void:
 	_shield_time = maxf(_shield_time, duration)
 
+## True while the Mirror of the Soul shield is up. Enemy bolts that touch a
+## shielded caster are reflected back instead of absorbed (GDD spell 9).
+func is_shielded() -> bool:
+	return _shield_time > 0.0
+
+## Furthest point along `dir` (up to `distance`) that is not blocked by level
+## geometry, so Holy Step never blinks through a wall (GDD spell 8). The probe
+## ray is cast at chest height against the level collision layer (16).
+func blink_target(dir: Vector3, distance: float) -> Vector3:
+	var aim := dir.normalized()
+	if aim == Vector3.ZERO:
+		aim = -global_transform.basis.z
+	var full := global_position + aim * distance
+	var world := get_world_3d()
+	if world == null:
+		return full
+	var space := world.direct_space_state
+	if space == null:
+		return full
+	var chest := global_position + Vector3.UP * 0.9
+	var params := PhysicsRayQueryParameters3D.create(chest, chest + aim * distance, 16)
+	params.exclude = [get_rid()]
+	var hit := space.intersect_ray(params)
+	if hit.is_empty():
+		return full
+	var safe: Vector3 = (hit["position"] as Vector3) - aim * 0.6
+	safe.y = global_position.y
+	return safe
+
 ## Teleports the caster to `destination` (Holy Step).
 func blink_to(destination: Vector3) -> void:
 	global_position = destination
