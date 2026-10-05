@@ -23,6 +23,9 @@ func _ready() -> void:
 	_test_ranged_demon()
 	_test_npc_dialog()
 	_test_balance()
+	_test_stage3_polish()
+	_test_arena_content()
+	_test_stage3_vfx()
 	print("=== RESULT: %d passed, %d failed ===" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
 
@@ -348,3 +351,62 @@ func _test_balance() -> void:
 	print("  [INFO] theoretical max level: %d" % g.level)
 	_check(g.level >= 8 and g.level <= 30, "max level %d in 8-30" % g.level)
 	g.free()
+
+## Stage 3 (P2) - content & polish: the code-built animation set exists with the
+## four BlenderInstruction section 4 clips, and the asset library exposes the new
+## Email Wraith model slot (null-safe fallback keeps the suite green without it).
+func _test_stage3_polish() -> void:
+	var host := Node3D.new()
+	add_child(host)
+	var pivot := Node3D.new()
+	host.add_child(pivot)
+	var anim := PlayerAnimation.attach(host, pivot)
+	_check(anim != null, "PlayerAnimation.attach returns an AnimationPlayer")
+	for clip in PlayerAnimation.CLIPS:
+		_check(anim.has_animation(clip), "animation clip '%s' registered" % clip)
+	_check(PlayerAnimation.CLIPS.size() == 4, "four BlenderInstruction clips declared")
+	_check(anim.current_animation == PlayerAnimation.IDLE, "idle plays on attach")
+	remove_child(host)
+	host.free()
+	# The Email Wraith slot exists on the model library (dedicated .glb optional).
+	_check(ModelLibrary.EMAIL_WRAITH.ends_with("email_wraith.glb"), "ModelLibrary exposes EMAIL_WRAITH")
+
+## Stage 3 (P2) - arena content: every stair cell is capped by a ceiling slab at
+## CEILING_H (Level Design.MD's >= 4 m clearance), and each floor is decorated
+## with scattered office props.
+func _test_arena_content() -> void:
+	var level := LevelBuilder.new()
+	add_child(level)
+	level.build(0)
+	_check(level.ceiling_count > 0, "stair cells are capped (%d ceilings)" % level.ceiling_count)
+	_check(level.props_count > 0, "arena is decorated (%d props)" % level.props_count)
+	# The ceiling constant itself must meet the brief's 4 m head clearance.
+	_check(LevelBuilder.CEILING_H >= 4.0, "CEILING_H >= 4 m over stairs")
+	# Every stair count on the built floor is matched by a ceiling.
+	_check(level.ceiling_count == level.stair_count, "one ceiling per stair cell")
+	remove_child(level)
+	level.free()
+
+## Stage 3 (P2) - juice VFX: the physics debris chunk launches and tints itself,
+## and the HUD exposes a hit marker + screen shake that EffectUtil forwards to.
+func _test_stage3_vfx() -> void:
+	# Debris chunk: a RigidBody3D that takes a launch velocity and tints itself.
+	var chunk := DebrisChunk.new()
+	add_child(chunk)
+	chunk.launch(Vector3(1, 1, 0), 5.0, Color("#2f7dff"))
+	_check(chunk.linear_velocity.length() > 0.0, "debris chunk launches with velocity")
+	_check(DebrisChunk.LIFETIME > 0.0, "debris chunk has a finite lifetime")
+	remove_child(chunk)
+	chunk.free()
+
+	# HUD: hit marker flashes and screen shake kick off on demand.
+	var hud := HUD.new()
+	add_child(hud)
+	_check(not hud.is_hitmarker_visible(), "hit marker hidden by default")
+	hud.flash_hitmarker()
+	_check(hud.is_hitmarker_visible(), "flash_hitmarker shows the marker")
+	hud.shake()
+	_check(hud.is_shaking(), "shake starts the screen shake timer")
+	remove_child(hud)
+	hud.free()
+

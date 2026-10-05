@@ -12,6 +12,7 @@ const DIR := "res://assets/models/"
 const EXORCIST := DIR + "exorcist.glb"
 const WATER_COOLER := DIR + "water_cooler.glb"
 const PAPERWORK_PHANTOM := DIR + "paperwork_phantom.glb"
+const EMAIL_WRAITH := DIR + "email_wraith.glb"
 const COPIER_PORTAL := DIR + "copier_portal.glb"
 
 ## True when the exported model exists on disk.

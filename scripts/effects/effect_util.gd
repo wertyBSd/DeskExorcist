@@ -57,3 +57,23 @@ static func heal_player(tree: SceneTree, amount: float) -> void:
 static func player(tree: SceneTree) -> Node3D:
 	var list := tree.get_nodes_in_group("player")
 	return list[0] if not list.is_empty() else null
+
+## Flings a burst of physics debris from a demon death or an explosion
+## (ROADMAP Stage 3: physics-razlyot musora).  Each chunk is a RigidBody3D that
+## tumbles and bounces off the level before fading out.  No-op off-tree.
+static func spawn_debris(tree: SceneTree, centre: Vector3, count: int, colour: Color, speed: float = 4.0) -> void:
+	var host := tree.current_scene
+	if host == null:
+		return
+	for _i in count:
+		var chunk := DebrisChunk.new()
+		host.add_child(chunk)
+		chunk.global_position = centre + Vector3(randf_range(-0.3, 0.3), randf_range(0.2, 0.8), randf_range(-0.3, 0.3))
+		var dir := Vector3(randf_range(-1.0, 1.0), randf_range(0.3, 1.0), randf_range(-1.0, 1.0))
+		chunk.launch(dir, speed * randf_range(0.6, 1.4), colour)
+
+## Asks the HUD to flash its hit marker (ROADMAP Stage 3 VFX: hitmarkers).
+static func hitmarker(tree: SceneTree) -> void:
+	for h in tree.get_nodes_in_group("hud"):
+		if h.has_method("flash_hitmarker"):
+			h.call("flash_hitmarker")

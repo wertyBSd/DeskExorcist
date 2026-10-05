@@ -19,6 +19,16 @@ var _dialog_label: Label
 var _charge_bar: ProgressBar
 var _charge_ratio: float = 0.0
 
+## Hit marker (ROADMAP Stage 3 VFX): a brief cross that flashes on every hit.
+var _hitmarker: Control
+var _hit_time: float = 0.0
+const HIT_MARKER_TIME := 0.18
+
+## Screen shake (ROADMAP Stage 3 VFX): an offset applied while the player is hit.
+var _shake_time: float = 0.0
+const SHAKE_TIME := 0.25
+const SHAKE_AMOUNT := 10.0
+
 func _ready() -> void:
 	layer = 1
 	add_to_group("hud")
@@ -66,6 +76,19 @@ func _build() -> void:
 	_charge_bar = _make_bar(Color("#ffd166"), Vector2(440, 586), Vector2(400, 16))
 	_charge_bar.visible = false
 
+	# Hit marker: four short arms around the crosshair, hidden until a hit.
+	_hitmarker = Control.new()
+	_hitmarker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hitmarker.position = Vector2(624, 344)
+	_hitmarker.visible = false
+	for d in [Vector2(0, -12), Vector2(0, 12), Vector2(-12, 0), Vector2(12, 0)]:
+		var arm := ColorRect.new()
+		arm.color = Color("#ffe9a8")
+		arm.size = Vector2(8, 4)
+		arm.position = d
+		_hitmarker.add_child(arm)
+	_root.add_child(_hitmarker)
+
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 6)
 	bar.position = Vector2(24, 640)
@@ -110,7 +133,7 @@ func _make_slot(slot: int) -> Control:
 	_slots.append(holder)
 	return holder
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _player == null:
 		_bind_player(EffectUtil.player(get_tree()) as Player)
 	if _game == null:
@@ -118,6 +141,21 @@ func _process(_delta: float) -> void:
 		if not games.is_empty():
 			_game = games[0] as Game
 	_refresh()
+	_tick_vfx(delta)
+
+## Runs down the hit marker and screen shake timers (ROADMAP Stage 3 VFX).
+func _tick_vfx(delta: float) -> void:
+	if _hit_time > 0.0:
+		_hit_time = maxf(0.0, _hit_time - delta)
+		if _hitmarker != null:
+			_hitmarker.visible = _hit_time > 0.0
+	if _shake_time > 0.0:
+		_shake_time = maxf(0.0, _shake_time - delta)
+		var offset := Vector2.ZERO
+		if _shake_time > 0.0:
+			offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * SHAKE_AMOUNT * (_shake_time / SHAKE_TIME)
+		if _root != null:
+			_root.position = offset
 
 func _refresh() -> void:
 	if _game != null:
@@ -149,6 +187,24 @@ func get_charge_ratio() -> float:
 ## True while the charge indicator is on screen.
 func is_charge_visible() -> bool:
 	return _charge_bar != null and _charge_bar.visible
+
+## Flashes the crosshair hit marker (ROADMAP Stage 3 VFX).  Called on any hit.
+func flash_hitmarker() -> void:
+	_hit_time = HIT_MARKER_TIME
+	if _hitmarker != null:
+		_hitmarker.visible = true
+
+## Kicks a short camera shake when the caster takes damage (ROADMAP Stage 3 VFX).
+func shake() -> void:
+	_shake_time = SHAKE_TIME
+
+## True while the hit marker cross is on screen; exposed for tests.
+func is_hitmarker_visible() -> bool:
+	return _hitmarker != null and _hitmarker.visible
+
+## True while the screen shake timer is still running; exposed for tests.
+func is_shaking() -> bool:
+	return _shake_time > 0.0
 
 ## Called by a nearby NPCDialog when the player walks into its trigger sphere.
 func show_dialog(text: String) -> void:

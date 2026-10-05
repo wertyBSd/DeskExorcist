@@ -69,6 +69,7 @@ func _check_hits() -> void:
 		for e in EffectUtil.enemies(get_tree()):
 			if e is Node3D and (e as Node3D).global_position.distance_to(global_position) <= HIT_RADIUS:
 				EffectUtil.damage(e, damage, global_position)
+				EffectUtil.hitmarker(get_tree())
 				queue_free()
 				return
 

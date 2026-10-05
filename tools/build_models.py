@@ -197,6 +197,34 @@ def build_copier():
     export(os.path.join(OUT_DIR, "copier_portal.glb"))
 
 
+def build_wraith():
+    """Enemy 3 - the Email Wraith: a blue courier-ghost that fires from range.
+    Same low-poly flat-shaded language as the other lots; only the palette and
+    silhouette change so it reads instantly against the violet phantoms."""
+    clear_scene()
+    core = mat("wraith_core", (0.18, 0.49, 1.0), emission=1.0)
+    cloth = mat("wraith_cloth", (0.55, 0.72, 0.95))
+    paper = mat("wraith_paper", (0.90, 0.93, 1.0))
+    ink = mat("wraith_ink", (0.20, 0.28, 0.55))
+    glyph = mat("wraith_glyph", (0.70, 0.90, 1.0), emission=1.2)
+
+    box("Core", (0.0, 0.0, 0.36), (0.24, 0.20, 0.32), core)
+    cyl("Hood", (0.0, 0.0, 0.62), 0.20, 0.26, cloth, verts=8)
+    for side in (-1.0, 1.0):
+        box("Wing%d" % int(side), (side * 0.30, 0.0, 0.48), (0.36, 0.03, 0.24),
+            paper, rot=(0.0, 0.0, side * 0.35))
+        box("WingInk%d" % int(side), (side * 0.30, -0.02, 0.46), (0.22, 0.01, 0.04),
+            ink, rot=(0.0, 0.0, side * 0.35))
+    box("Letter", (0.0, -0.22, 0.50), (0.26, 0.02, 0.18), paper)
+    box("LetterInk", (0.0, -0.24, 0.50), (0.18, 0.01, 0.03), ink)
+    ring("ClipA", (0.26, 0.0, 0.30), 0.07, 0.015, glyph)
+    ring("ClipB", (-0.24, 0.10, 0.22), 0.06, 0.015, glyph)
+    for o in bpy.data.objects:
+        if o.type == 'MESH':
+            apply_flat(o)
+    export(os.path.join(OUT_DIR, "email_wraith.glb"))
+
+
 # --- entry point -------------------------------------------------------------
 
 def main():
@@ -206,6 +234,7 @@ def main():
     build_cooler()
     build_phantom()
     build_copier()
+    build_wraith()
     print("[build_models] done")
 
 

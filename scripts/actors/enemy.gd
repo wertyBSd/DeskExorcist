@@ -75,12 +75,16 @@ func _refresh_model() -> void:
 		_model = null
 	if _placeholder != null and is_instance_valid(_placeholder):
 		_placeholder.visible = false
-	# EMAIL_WRAITH has no dedicated .glb yet; it borrows the phantom silhouette.
+	# Prefer a dedicated .glb per archetype (BlenderInstruction.MD lot 2 and 3),
+	# falling back to the phantom silhouette when an export is missing.
 	var path := ModelLibrary.PAPERWORK_PHANTOM
 	var height := 0.7
 	if kind == Kind.WATER_COOLER:
 		path = ModelLibrary.WATER_COOLER
 		height = 1.4
+	elif kind == Kind.EMAIL_WRAITH and ModelLibrary.has_model(ModelLibrary.EMAIL_WRAITH):
+		path = ModelLibrary.EMAIL_WRAITH
+		height = 1.1
 	_model = ModelLibrary.attach(self, path, height)
 
 func _build_mesh() -> void:
@@ -209,6 +213,8 @@ func apply_slow(ratio: float, duration: float) -> void:
 
 func _die() -> void:
 	died.emit(self)
+	# Physics debris burst on death (ROADMAP Stage 3).
+	EffectUtil.spawn_debris(get_tree(), global_position + Vector3.UP * 0.7, 6, _placeholder_colour(), 3.5)
 	_spawn_soul()
 	queue_free()
 

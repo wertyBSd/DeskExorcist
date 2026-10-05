@@ -36,6 +36,10 @@ var _slow_ratio: float = 0.0
 
 var _mouse_captured: bool = true
 
+## Code-built idle / run / cast_hold / cast_release clips (BlenderInstruction 4).
+var _anim: AnimationPlayer = null
+var _anim_state: String = ""
+
 func _ready() -> void:
 	add_to_group("player")
 	spells = SpellLibrary.build_all()
@@ -48,6 +52,7 @@ func _ready() -> void:
 	var model_root := get_node_or_null("ModelRoot") as Node3D
 	if model_root != null:
 		ModelLibrary.attach(model_root, ModelLibrary.EXORCIST, 1.7)
+		_anim = PlayerAnimation.attach(self, model_root)
 
 # --- Input ------------------------------------------------------------------
 
@@ -93,6 +98,10 @@ func _release_charging() -> void:
 		soul_gauge = 0.0
 	_cooldowns[spell.spell_id] = spell.effective_cooldown()
 	spell.cast_effect(global_position, _aim_point(), get_tree())
+	# One-shot release flourish, then back to the locomotion clips.
+	if _anim != null and _anim.has_animation(PlayerAnimation.CAST_RELEASE):
+		_anim_state = PlayerAnimation.CAST_RELEASE
+		_anim.play(PlayerAnimation.CAST_RELEASE)
 
 func _tick_charge(delta: float) -> void:
 	if _charging_slot == -1:
@@ -142,6 +151,27 @@ func _physics_process(delta: float) -> void:
 	_apply_gravity(delta)
 	_apply_movement()
 	move_and_slide()
+	_update_animation()
+
+## Picks the clip that matches the current state (BlenderInstruction section 4):
+## cast_hold while a spell is charged, run while moving, idle otherwise.
+func _update_animation() -> void:
+	if _anim == null:
+		return
+	var want := PlayerAnimation.IDLE
+	if _charging_slot != -1:
+		want = PlayerAnimation.CAST_HOLD
+	elif Vector2(velocity.x, velocity.z).length() > 0.1:
+		want = PlayerAnimation.RUN
+	_play(want)
+
+## Switches clips only when the desired one changes, so looping clips are not
+## restarted every physics frame.
+func _play(clip: String) -> void:
+	if clip == _anim_state or not _anim.has_animation(clip):
+		return
+	_anim_state = clip
+	_anim.play(clip)
 
 func _apply_gravity(delta: float) -> void:
 	var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
@@ -217,6 +247,10 @@ func take_damage(amount: float, _source: Vector3 = Vector3.INF) -> void:
 	health = maxf(0.0, health - amount)
 	_interrupt_charge()
 	health_changed.emit(health, max_health)
+	# Screen shake on every hit (ROADMAP Stage 3 VFX).
+	for h in get_tree().get_nodes_in_group("hud"):
+		if h.has_method("shake"):
+			h.call("shake")
 	if health <= 0.0:
 		died.emit()
 

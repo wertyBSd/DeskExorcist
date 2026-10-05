@@ -24,6 +24,15 @@ const DECK_H := 2.4         ## walkable height of a deck
 const DECK_THICK := 0.4     ## deck slab thickness
 const STAIR_THICK := 0.3    ## stair ramp slab thickness
 
+## Minimum head clearance over a stair run (Level Design.MD: "Потолки над
+## лестницами должны иметь запас высоты не менее 4 метров").  A solid slab is
+## laid over every '^' stair cell at this height so the space reads as a room.
+const CEILING_H := 4.0
+const CEILING_THICK := 0.3
+
+## How many decorative office props to sprinkle over each floor's open tiles.
+const PROPS_PER_FLOOR := 14
+
 const LEVELS := [
 	{
 		"name": "Spaceport Lobby",
@@ -81,12 +90,16 @@ var block_count := 0
 var npc_count := 0
 var deck_count := 0
 var stair_count := 0
+var props_count := 0
+var ceiling_count := 0
 
 var _map: Array = []
 var _wall_mat: StandardMaterial3D = null
 var _floor_mat: StandardMaterial3D = null
 var _deck_mat: StandardMaterial3D = null
 var _stair_mat: StandardMaterial3D = null
+var _ceiling_mat: StandardMaterial3D = null
+var _prop_mat: StandardMaterial3D = null
 
 func _ready() -> void:
 	add_to_group("level")
@@ -99,6 +112,8 @@ func build(level_index: int = 0) -> void:
 	npc_count = 0
 	deck_count = 0
 	stair_count = 0
+	props_count = 0
+	ceiling_count = 0
 	npc_points.clear()
 	free_cells.clear()
 	spawn_cells.clear()
@@ -134,11 +149,14 @@ func build(level_index: int = 0) -> void:
 				"^":
 					_register_floor_cell(x, z)
 					_add_stair(centre, x, z)
+					_add_ceiling(centre)
 				"=":
 					free_cells.append(Vector2i(x, z))
 					_add_deck(centre)
 				_:
 					_register_floor_cell(x, z)
+
+	_scatter_props()
 
 ## World-space centre of a grid cell, at floor level.
 func cell_centre(x: int, z: int) -> Vector3:
@@ -330,3 +348,68 @@ func _stair_material() -> StandardMaterial3D:
 		_stair_mat.albedo_color = Color("#5c6275")
 		_stair_mat.roughness = 0.8
 	return _stair_mat
+
+func _ceiling_material() -> StandardMaterial3D:
+	if _ceiling_mat == null:
+		_ceiling_mat = StandardMaterial3D.new()
+		_ceiling_mat.albedo_color = Color("#2a2c38")
+		_ceiling_mat.roughness = 0.95
+	return _ceiling_mat
+
+func _prop_material() -> StandardMaterial3D:
+	if _prop_mat == null:
+		_prop_mat = StandardMaterial3D.new()
+		_prop_mat.albedo_color = Color("#6b6350")
+		_prop_mat.roughness = 0.9
+	return _prop_mat
+
+## A solid slab over a stair cell at CEILING_H, guaranteeing the Level Design
+## brief's >= 4 m head clearance above the stair run.
+func _add_ceiling(base: Vector3) -> void:
+	var body := StaticBody3D.new()
+	body.name = "Ceiling"
+	body.collision_layer = 16
+	body.collision_mask = 0
+	var size := Vector3(BLOCK, CEILING_THICK, BLOCK)
+	body.position = base + Vector3(0.0, CEILING_H + CEILING_THICK * 0.5, 0.0)
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	shape.shape = box
+	body.add_child(shape)
+	var mesh := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mesh.mesh = bm
+	mesh.material_override = _ceiling_material()
+	body.add_child(mesh)
+	add_child(body)
+	ceiling_count += 1
+
+## Sprinkles decorative office props over the open floor tiles (Level Design.MD
+## atmosphere).  Props are visual-only boxes scattered clear of the spawn tile.
+func _scatter_props() -> void:
+	if free_cells.is_empty():
+		return
+	var candidates := free_cells.duplicate()
+	candidates.shuffle()
+	for i in mini(PROPS_PER_FLOOR, candidates.size()):
+		var c: Vector2i = candidates[i]
+		var centre := cell_centre(c.x, c.y)
+		if centre.distance_to(player_spawn) < BLOCK:
+			continue
+		_spawn_prop(centre)
+
+## One office prop: a code-built desk/cabinet silhouette with a slight rotation.
+func _spawn_prop(base: Vector3) -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.name = "Prop"
+	var size := Vector3(randf_range(0.8, 1.6), randf_range(0.5, 1.1), randf_range(0.5, 1.1))
+	var bm := BoxMesh.new()
+	bm.size = size
+	mesh.mesh = bm
+	mesh.material_override = _prop_material()
+	mesh.position = base + Vector3(0.0, size.y * 0.5, 0.0)
+	mesh.rotation.y = randf_range(0.0, TAU)
+	add_child(mesh)
+	props_count += 1
