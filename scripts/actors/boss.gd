@@ -67,9 +67,13 @@ func _build_mesh() -> void:
 	_placeholder.material_override = mat
 	add_child(_placeholder)
 
-## Reuses the water-cooler silhouette scaled up until a dedicated boss .glb exists.
+## Uses the dedicated Demon Director export, falling back to a scaled water
+## cooler only if the asset pipeline has not been run.
 func _refresh_model() -> void:
-	_model = ModelLibrary.attach(self, ModelLibrary.WATER_COOLER, 3.0)
+	var path := ModelLibrary.BOSS_DIRECTOR
+	if not ModelLibrary.has_model(path):
+		path = ModelLibrary.WATER_COOLER
+	_model = ModelLibrary.attach(self, path, 3.0)
 	if _model != null and _placeholder != null:
 		_placeholder.visible = false
 

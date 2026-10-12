@@ -47,6 +47,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\run_tests.ps1
 `tools/build_models.py` (Blender headless) → `assets/models/*.glb`,
 грузятся через `ModelLibrary` (null-safe fallback на процедурные плейсхолдеры).
 
+Все 10 моделей собираются, проверяются по бюджету полигонажа и рендерятся в
+контактный лист для визуального ревью:
+
+```
+"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --python tools\build_models.py
+"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --python tools\check_models.py
+"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --python tools\preview_models.py
+```
+
+`build/preview.png` — шот всех силуэтов (папка в git-игноре).
+
 ## Документы
 
 - `GAME DESIGN DOCUMENT.MD` — GDD.

@@ -15,6 +15,11 @@ const PAPERWORK_PHANTOM := DIR + "paperwork_phantom.glb"
 const EMAIL_WRAITH := DIR + "email_wraith.glb"
 const COPIER_PORTAL := DIR + "copier_portal.glb"
 const NPC := DIR + "survivor.glb"
+## E1 archetypes and the run finale, built by tools/build_models.py.
+const WIRE_RUNNER := DIR + "enemy_runner.glb"
+const FILING_CABINET_TANK := DIR + "enemy_tank.glb"
+const PAPER_BOMBER := DIR + "enemy_bomber.glb"
+const BOSS_DIRECTOR := DIR + "boss_director.glb"
 
 ## True when the exported model exists on disk.
 static func has_model(path: String) -> bool:

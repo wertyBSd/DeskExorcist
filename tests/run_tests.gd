@@ -48,6 +48,8 @@ func _ready() -> void:
 	_test_charge_indicator()
 	_test_pause_menu()
 	_test_models()
+	_test_enemy_models_are_distinct()
+	_test_survivor_model()
 	_test_spell_gdd()
 	_test_ranged_demon()
 	_test_npc_dialog()
@@ -367,6 +369,12 @@ func _test_models() -> void:
 		ModelLibrary.WATER_COOLER,
 		ModelLibrary.PAPERWORK_PHANTOM,
 		ModelLibrary.COPIER_PORTAL,
+		ModelLibrary.EMAIL_WRAITH,
+		ModelLibrary.WIRE_RUNNER,
+		ModelLibrary.FILING_CABINET_TANK,
+		ModelLibrary.PAPER_BOMBER,
+		ModelLibrary.NPC,
+		ModelLibrary.BOSS_DIRECTOR,
 	]
 	for path in paths:
 		var label: String = path.get_file()
@@ -377,6 +385,40 @@ func _test_models() -> void:
 			var meshes := inst.find_children("*", "MeshInstance3D", true, false)
 			_check(meshes.size() > 0, "%s carries mesh geometry (%d)" % [label, meshes.size()])
 			inst.free()
+
+## Every demon archetype must load its OWN export. When the E1 lots were still
+## missing, enemy.gd silently fell back to the phantom silhouette, so the runner,
+## the tank and the bomber all looked like the same violet ghost.
+func _test_enemy_models_are_distinct() -> void:
+	var by_kind := {
+		Enemy.Kind.WATER_COOLER: ModelLibrary.WATER_COOLER,
+		Enemy.Kind.EMAIL_WRAITH: ModelLibrary.EMAIL_WRAITH,
+		Enemy.Kind.WIRE_RUNNER: ModelLibrary.WIRE_RUNNER,
+		Enemy.Kind.FILING_CABINET_TANK: ModelLibrary.FILING_CABINET_TANK,
+		Enemy.Kind.PAPER_BOMBER: ModelLibrary.PAPER_BOMBER,
+	}
+	var seen := {}
+	for kind in by_kind:
+		var path: String = by_kind[kind]
+		_check(ModelLibrary.has_model(path), "archetype model %s exists" % path.get_file())
+		_check(not seen.has(path), "archetype model %s is not shared" % path.get_file())
+		seen[path] = true
+	_check(seen.size() == by_kind.size(), "all %d ranged/utility archetypes are distinct" % by_kind.size())
+	# The boss used to be a water cooler scaled to 3 m (ASSETS_MODELS.md #1).
+	_check(ModelLibrary.has_model(ModelLibrary.BOSS_DIRECTOR), "boss has a dedicated model")
+	_check(ModelLibrary.BOSS_DIRECTOR != ModelLibrary.WATER_COOLER, "boss is not the water cooler")
+
+## The survivor .glb exists, so npc.gd takes its model branch instead of the
+## code-built silhouette. Its whole job is to never read as a demon (BUGS.md #2).
+func _test_survivor_model() -> void:
+	_check(ModelLibrary.has_model(ModelLibrary.NPC), "survivor.glb is exported")
+	var inst := ModelLibrary.instantiate(ModelLibrary.NPC, 1.7)
+	_check(inst != null, "survivor instantiates")
+	if inst != null:
+		# ModelLibrary._normalise grounds the model and scales it to the target.
+		var meshes := inst.find_children("*", "MeshInstance3D", true, false)
+		_check(meshes.size() > 0, "survivor carries geometry (%d)" % meshes.size())
+		inst.free()
 
 ## Stage 2.1 (ROADMAP): lock the spell parameters against GDD section 3 and the
 ## three mechanics that were only verified by code inspection before.

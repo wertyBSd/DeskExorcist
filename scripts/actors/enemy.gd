@@ -176,16 +176,30 @@ func _refresh_model() -> void:
 		_model = null
 	if _placeholder != null and is_instance_valid(_placeholder):
 		_placeholder.visible = false
-	# Prefer a dedicated .glb per archetype (BlenderInstruction.MD lot 2 and 3),
-	# falling back to the phantom silhouette when an export is missing.
+	# Every archetype gets its own export so the six silhouettes are told apart at
+	# a glance (BlenderInstruction.MD lots 2-3, ASSETS_MODELS.md #2). Missing
+	# exports fall back to the phantom silhouette rather than leaving a hole.
 	var path := ModelLibrary.PAPERWORK_PHANTOM
 	var height := 0.7
-	if kind == Kind.WATER_COOLER:
-		path = ModelLibrary.WATER_COOLER
-		height = 1.4
-	elif kind == Kind.EMAIL_WRAITH and ModelLibrary.has_model(ModelLibrary.EMAIL_WRAITH):
-		path = ModelLibrary.EMAIL_WRAITH
-		height = 1.1
+	match kind:
+		Kind.WATER_COOLER:
+			path = ModelLibrary.WATER_COOLER
+			height = 1.4
+		Kind.EMAIL_WRAITH:
+			path = ModelLibrary.EMAIL_WRAITH
+			height = 1.1
+		Kind.WIRE_RUNNER:
+			path = ModelLibrary.WIRE_RUNNER
+			height = 1.3
+		Kind.FILING_CABINET_TANK:
+			path = ModelLibrary.FILING_CABINET_TANK
+			height = 1.7
+		Kind.PAPER_BOMBER:
+			path = ModelLibrary.PAPER_BOMBER
+			height = 1.2
+	if not ModelLibrary.has_model(path):
+		path = ModelLibrary.PAPERWORK_PHANTOM
+		height = 0.7
 	_model = ModelLibrary.attach(self, path, height)
 
 func _build_mesh() -> void:
