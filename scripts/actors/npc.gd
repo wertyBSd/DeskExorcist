@@ -30,25 +30,50 @@ func _ready() -> void:
 	shape.shape = sphere
 	add_child(shape)
 
-	var mesh := MeshInstance3D.new()
-	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.35
-	capsule.height = 1.6
-	mesh.mesh = capsule
-	mesh.position = Vector3(0.0, 0.8, 0.0)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color("#e8b98c")
-	mat.emission_enabled = true
-	mat.emission = Color("#6b4a6f")
-	mat.emission_energy_multiplier = 0.3
-	mesh.material_override = mat
-	add_child(mesh)
-	# Survivors reuse the exorcist silhouette until a dedicated NPC model exists.
-	if ModelLibrary.attach(self, ModelLibrary.EXORCIST, 1.7) != null:
-		mesh.visible = false
+	# Prefer a dedicated survivor .glb when the asset pipeline provides one;
+	# otherwise fall back to the code-built silhouette below (never the reused
+	# hero model, whose T-pose read as "a monster with its arms out").
+	if ModelLibrary.has_model(ModelLibrary.NPC):
+		ModelLibrary.attach(self, ModelLibrary.NPC, 1.7)
+	else:
+		_build_survivor_mesh()
 
-	body_entered.connect(_on_entered)
-	body_exited.connect(_on_exited)
+## A calm, clearly-human survivor: arms at the sides, distinct palette, so NPCs
+## are never mistaken for demons (GDD Level Design: barricaded survivors).
+func _build_survivor_mesh() -> void:
+	var skin := _mat(Color("#e8b98c"))
+	var shirt := _mat(Color("#8f9bb3"))
+	var vest := _mat(Color("#c8d2e6"))
+	var legs := _mat(Color("#3b4055"))
+	_add_box("LegL", Vector3(-0.11, 0.42, 0.0), Vector3(0.15, 0.84, 0.15), legs)
+	_add_box("LegR", Vector3(0.11, 0.42, 0.0), Vector3(0.15, 0.84, 0.15), legs)
+	_add_box("Torso", Vector3(0.0, 1.12, 0.0), Vector3(0.44, 0.56, 0.26), shirt)
+	_add_box("Vest", Vector3(0.0, 1.12, -0.14), Vector3(0.40, 0.50, 0.04), vest)
+	# Arms hang down at the sides (the crucial difference from the hero T-pose).
+	_add_box("ArmL", Vector3(-0.30, 1.06, 0.0), Vector3(0.13, 0.62, 0.13), shirt)
+	_add_box("ArmR", Vector3(0.30, 1.06, 0.0), Vector3(0.13, 0.62, 0.13), shirt)
+	_add_box("Head", Vector3(0.0, 1.60, 0.0), Vector3(0.26, 0.28, 0.28), skin)
+
+func _mat(colour: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = colour
+	m.roughness = 0.9
+	return m
+
+func _add_box(node_name: String, pos: Vector3, size: Vector3, material: StandardMaterial3D) -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.name = node_name
+	var box := BoxMesh.new()
+	box.size = size
+	mesh.mesh = box
+	mesh.position = pos
+	mesh.material_override = material
+	add_child(mesh)
+
+	if not body_entered.is_connected(_on_entered):
+		body_entered.connect(_on_entered)
+	if not body_exited.is_connected(_on_exited):
+		body_exited.connect(_on_exited)
 
 func _on_entered(body: Node3D) -> void:
 	if body.is_in_group("player"):

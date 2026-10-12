@@ -34,6 +34,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\run_tests.ps1
 
 Параметры `-Godot <path>` и `-Project <path>` позволяют переопределить пути.
 
+## Сборка билда
+
+Экспорт-пресеты в `export_presets.cfg` (Windows + Linux):
+
+1. Открой проект в Godot (`--path c:\research\games\Shooter`).
+2. **Project → Export…** → выбери пресет (Windows Desktop / Linux/X11).
+3. **Export Project** → получишь `build/DeskExorcist.exe` или `build/DeskExorcist.x86_64`.
+
 ## Модели
 
 `tools/build_models.py` (Blender headless) → `assets/models/*.glb`,
@@ -45,3 +53,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\run_tests.ps1
 - `Level Design.MD` — уровни.
 - `BlenderInstruction.MD` — пайплайн моделей.
 - `ROADMAP.md` — план разработки по этапам (P0–P3).
+- `GDD_ROADMAP.md` — сверка с GDD по пунктам + план до играбельного состояния.
+- `BUGS.md` — трекер багов (что нашли, что пофикшено, что речекать).

@@ -73,14 +73,25 @@ func open() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	visible = true
 
-## Unpauses the run and re-captures the cursor for first-person aiming.
+## Unpauses the run and re-captures the cursor for first-person aiming. A run
+## that already ended (death/victory) stays frozen.
 func close() -> void:
 	if not visible:
 		return
 	EffectUtil.sound(get_tree(), &"ui_pause")
 	visible = false
+	if _run_finished():
+		get_tree().paused = true
+		return
 	get_tree().paused = false
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+## True once the run director has stopped (player died or time ran out).
+func _run_finished() -> bool:
+	for node in get_tree().get_nodes_in_group("game"):
+		if node.get("_running") != null and node.get("_running") == false:
+			return true
+	return false
 
 ## True while the overlay is on screen.
 func is_open() -> bool:
@@ -88,15 +99,25 @@ func is_open() -> bool:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed(&"restart"):
+		# Mark the event handled *before* the reload: reload_current_scene()
+		# detaches this menu from the tree, after which get_viewport() is null
+		# and calling set_input_as_handled() on it crashes.
+		_mark_input_handled()
 		_restart()
-		get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed(&"pause"):
 		# A visible level-up screen owns the pause; let it keep the key.
 		if not visible and _level_up_open():
 			return
 		toggle()
-		get_viewport().set_input_as_handled()
+		_mark_input_handled()
+
+## Marks the current input event handled without assuming the node is still on
+## the tree (get_viewport() is null once a scene reload detaches the menu).
+func _mark_input_handled() -> void:
+	var vp := get_viewport()
+	if vp != null:
+		vp.set_input_as_handled()
 
 func _on_resume() -> void:
 	close()

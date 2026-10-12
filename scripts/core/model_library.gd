@@ -14,6 +14,7 @@ const WATER_COOLER := DIR + "water_cooler.glb"
 const PAPERWORK_PHANTOM := DIR + "paperwork_phantom.glb"
 const EMAIL_WRAITH := DIR + "email_wraith.glb"
 const COPIER_PORTAL := DIR + "copier_portal.glb"
+const NPC := DIR + "survivor.glb"
 
 ## True when the exported model exists on disk.
 static func has_model(path: String) -> bool:

@@ -10,12 +10,17 @@ signal chosen(card: UpgradeCard)
 const BASE_SIZE := Vector2(240, 320)
 
 var card: UpgradeCard
+var slot := 0
 
 func setup(p_card: UpgradeCard) -> void:
 	card = p_card
 	custom_minimum_size = BASE_SIZE
 	text = ""
 	flat = true
+
+## The 1/2/3 keyboard shortcut for this card, shown as a corner badge.
+func set_slot(p_slot: int) -> void:
+	slot = p_slot
 
 func _ready() -> void:
 	_build_visuals()
@@ -61,6 +66,15 @@ func _build_visuals() -> void:
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(desc)
+	# Keyboard hint badge (1/2/3) in the corner.
+	if slot > 0:
+		var badge := Label.new()
+		badge.text = "[%d]" % slot
+		badge.add_theme_font_size_override("font_size", 18)
+		badge.add_theme_color_override("font_color", card.accent if card != null else Color.WHITE)
+		badge.position = Vector2(BASE_SIZE.x - 46.0, 8.0)
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(badge)
 
 func _on_hover_start() -> void:
 	EffectUtil.sound(get_tree(), &"ui_hover")

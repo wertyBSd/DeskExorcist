@@ -4,16 +4,20 @@ class_name Projectile
 ## so no physics layer wiring is required.
 extends Area3D
 
-const HIT_RADIUS := 0.7
+const HIT_RADIUS := 0.9
 
 var velocity := Vector3.ZERO
 var damage := 10.0
 var from_enemy := false
+## Extra enemies this bolt can pass through before it dies (level-up card).
+var pierce := 0
 
 var _life := 0.0
 var _mesh: MeshInstance3D = null
 var _mat: StandardMaterial3D = null
 var _spawn_origin := Vector3.ZERO
+## A short stretched trail so fast bolts read clearly and their source is obvious.
+var _trail: MeshInstance3D = null
 
 ## Configures the bolt.  Call before adding it to the tree; the spawn origin is
 ## stored here and applied in _ready(), once the node is actually inside the
@@ -37,6 +41,13 @@ func _ready() -> void:
 	_apply_colour()
 	_mesh.material_override = _mat
 	add_child(_mesh)
+	# Stretched trail oriented along the velocity.
+	_trail = MeshInstance3D.new()
+	var trail_mesh := BoxMesh.new()
+	trail_mesh.size = Vector3(0.08, 0.08, 1.6)
+	_trail.mesh = trail_mesh
+	_trail.material_override = _mat
+	add_child(_trail)
 
 ## Tints the bolt gold for the player and violet for a demon; re-used when an
 ## enemy bolt is reflected back on its sender (GDD spell 9).
@@ -48,17 +59,52 @@ func _apply_colour() -> void:
 	_mat.emission = c
 
 func _physics_process(delta: float) -> void:
+	var previous := global_position
 	global_position += velocity * delta
 	_life += delta
+	_orient_trail()
 	if _life >= GameConfig.PROJECTILE_LIFETIME:
+		queue_free()
+		return
+	# Bolts are stopped by level geometry (walls/pillars, layer 5 = value 16).
+	# Without this, ranged demons shot the player straight through cover.
+	if _blocked_by_wall(previous):
+		EffectUtil.sound(get_tree(), &"bolt_impact", global_position)
 		queue_free()
 		return
 	_check_hits()
 
+## True when the segment travelled this frame crosses level geometry.
+func _blocked_by_wall(from: Vector3) -> bool:
+	var world := get_world_3d()
+	if world == null:
+		return false
+	var params := PhysicsRayQueryParameters3D.create(from, global_position, 16)
+	params.exclude = [get_rid()]
+	return not world.direct_space_state.intersect_ray(params).is_empty()
+
+## Points the trail behind the bolt along its direction of travel.
+func _orient_trail() -> void:
+	if _trail == null or velocity.length_squared() <= 0.0001:
+		return
+	var dir := velocity.normalized()
+	var up := Vector3.UP
+	if absf(dir.dot(up)) > 0.99:
+		up = Vector3.RIGHT
+	_trail.look_at(global_position - dir, up)
+	_trail.position = -dir * 0.8
+
 func _check_hits() -> void:
 	if from_enemy:
 		for p in get_tree().get_nodes_in_group("player"):
-			if p is Node3D and (p as Node3D).global_position.distance_to(global_position) <= HIT_RADIUS:
+			if not (p is Node3D):
+				continue
+			# Aimed at the torso: enemy bolts also fly near eye height, while the
+			# player's node origin sits at the feet.
+			var centre: Vector3 = p.global_position + Vector3.UP * 0.9
+			if p.has_method("hurt_center"):
+				centre = p.call("hurt_center")
+			if centre.distance_to(global_position) <= HIT_RADIUS:
 				if _try_reflect(p):
 					return
 				if p.has_method("take_damage"):
@@ -68,10 +114,21 @@ func _check_hits() -> void:
 				return
 	else:
 		for e in EffectUtil.enemies(get_tree()):
-			if e is Node3D and (e as Node3D).global_position.distance_to(global_position) <= HIT_RADIUS:
+			if not (e is Node3D):
+				continue
+			# Aimed at the body centre, not the feet: bolts travel at eye height.
+			var centre: Vector3 = e.global_position + Vector3.UP * 0.8
+			if e.has_method("hurt_center"):
+				centre = e.call("hurt_center")
+			if centre.distance_to(global_position) <= HIT_RADIUS:
 				EffectUtil.damage(e, damage, global_position)
 				EffectUtil.hitmarker(get_tree())
 				EffectUtil.sound(get_tree(), &"bolt_impact", global_position)
+				# Piercing: pass through and keep flying until charges run out.
+				if pierce > 0:
+					pierce -= 1
+					global_position += velocity.normalized() * (HIT_RADIUS + 0.15)
+					return
 				queue_free()
 				return
 

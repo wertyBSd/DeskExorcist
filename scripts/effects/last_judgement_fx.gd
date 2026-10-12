@@ -15,7 +15,8 @@ func setup(origin: Vector3) -> void:
 	for e in EffectUtil.enemies(get_tree()):
 		if not (e is Node3D):
 			continue
-		if e is Enemy and (e as Enemy).kind == Enemy.Kind.WATER_COOLER:
+		# The boss and other tanks take heavy damage but are not erased.
+		if _is_tanky(e):
 			EffectUtil.damage(e, TANKY_DAMAGE, centre)
 		else:
 			EffectUtil.damage(e, 99999.0, centre)
@@ -23,3 +24,10 @@ func setup(origin: Vector3) -> void:
 	var tween := create_tween()
 	tween.tween_property(flash, "modulate:a", 0.0, 0.6)
 	self_destruct(0.7)
+
+## True for enemies the ultimate should wound rather than erase (water coolers
+## and the boss).
+func _is_tanky(e: Node) -> bool:
+	if e.has_method("is_boss") and e.call("is_boss"):
+		return true
+	return e is Enemy and (e as Enemy).kind == Enemy.Kind.WATER_COOLER

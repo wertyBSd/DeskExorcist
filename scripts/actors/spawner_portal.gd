@@ -39,6 +39,24 @@ func _build_mesh() -> void:
 	mat.emission_energy_multiplier = 0.6
 	_mesh.material_override = mat
 	add_child(_mesh)
+	# A tall violet beam so an open portal is readable from across the arena
+	# (Level Design: spawn points need clear telegraphing).
+	var beam := MeshInstance3D.new()
+	beam.name = "PortalBeam"
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.22
+	cyl.bottom_radius = 0.55
+	cyl.height = 30.0
+	beam.mesh = cyl
+	beam.position = Vector3(0.0, 15.0, 0.0)
+	var bmat := StandardMaterial3D.new()
+	bmat.albedo_color = Color(0.55, 0.2, 0.95, 0.45)
+	bmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	bmat.emission_enabled = true
+	bmat.emission = Color("#a03cff")
+	bmat.emission_energy_multiplier = 2.0
+	beam.material_override = bmat
+	add_child(beam)
 
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
