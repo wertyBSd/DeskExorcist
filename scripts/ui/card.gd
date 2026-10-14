@@ -17,6 +17,12 @@ func setup(p_card: UpgradeCard) -> void:
 	custom_minimum_size = BASE_SIZE
 	text = ""
 	flat = true
+	# Never take keyboard focus. A focused Button answers `ui_accept`, and jump
+	# is bound to SPACE == `ui_accept`: holding the fire button, hitting level up
+	# and then pressing jump to get unstuck auto-picked whichever card had focus
+	# -- reliably the middle one (BUGS.md #18). Keys 1/2/3 and the mouse still
+	# work; they are handled by LevelUpScreen rather than by focus.
+	focus_mode = Control.FOCUS_NONE
 
 ## The 1/2/3 keyboard shortcut for this card, shown as a corner badge.
 func set_slot(p_slot: int) -> void:

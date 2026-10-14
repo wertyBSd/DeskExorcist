@@ -19,6 +19,12 @@ BUDGETS = {
     "enemy_bomber.glb": (500, 800, "small enemy"),
     "survivor.glb": (500, 800, "npc"),
     "boss_director.glb": (1500, 2000, "boss"),
+    # A viewmodel is one pair of hands, always on screen and 0.4 m from the lens,
+    # so it gets a bigger budget than the "small enemies and props" 500-800: the
+    # phalanges, knuckles and wrist strap are what make it read as a gloved hand
+    # instead of a beige blob. The charge orb is NOT in here -- it is a
+    # ChargeOrb built at runtime, shared with the holy bolt.
+    "viewmodel_arms.glb": (700, 1100, "first-person gloved hands"),
 }
 
 

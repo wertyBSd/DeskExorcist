@@ -31,6 +31,10 @@ const BOSS_XP: float = 40.0
 ## Seconds of invulnerability after the caster is hit, so a pack of demons
 ## touching at once cannot stack several hits into the same instant.
 const PLAYER_HIT_INVULN: float = 0.4
+## Knockback applied to every demon in melee reach when the caster is hit, and
+## the extra factor for the one that actually landed the hit. Being caught
+## against a wall has to buy space, not only cost health (BUGS.md #20).
+const PLAYER_HIT_SHOVE: float = 7.0
 
 ## How long the caster is stunned after a charging spell is interrupted by a hit
 ## (GDD section 2). Also carries a penalty cooldown on the interrupted spell.

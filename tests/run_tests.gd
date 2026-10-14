@@ -31,6 +31,7 @@ func _ready() -> void:
 	_test_upgrade_pool()
 	_test_upgrade_modifiers()
 	_test_level_design()
+	await _test_maps_have_no_dead_pockets()
 	_test_deck_navigation()
 	_test_floor_gimmicks()
 	_test_floor_difficulty()
@@ -42,15 +43,23 @@ func _ready() -> void:
 	_test_meta_shop()
 	_test_portal_beacon()
 	await _test_e8_hp_bars_and_minimap()
+	await _test_lost_demons_are_recovered()
+	await _test_portal_stays_on_the_floor()
 	await _test_training_hall()
 	await _test_demon_respawns_within_two_minutes()
 	_test_main_scene_wiring()
 	_test_charge_indicator()
+	await _test_charge_movement_and_shove()
+	await _test_bolt_is_the_charge_orb()
+	await _test_props_are_solid()
+	await _test_spell_input_isolation()
 	_test_pause_menu()
 	_test_models()
 	_test_enemy_models_are_distinct()
 	_test_survivor_model()
+	_test_art_naming_convention()
 	_test_spell_gdd()
+	await _test_spell_vfx()
 	_test_ranged_demon()
 	_test_npc_dialog()
 	_test_balance()
@@ -59,17 +68,23 @@ func _ready() -> void:
 	_test_ngplus_scaling()
 	await _test_postwin_overlay()
 	_test_arena_content()
+	_test_room_dressing()
+	await _test_room_dressing_leaves_openings_clear()
+	_test_texture_library()
 	await _test_stairwell_clearance()
 	_test_stage3_vfx()
 	_test_stage4_audio_settings()
 	_test_stage4_main_menu()
 	_test_stage4_meta()
 	_test_stage4_project()
+	await _test_splash_screen()
 	_test_crosshair()
 	_test_enemy_collision()
 	_test_npc_silhouette()
 	_test_props_clear_of_npcs()
 	_test_first_person_body_hidden()
+	await _test_viewmodel_arms()
+	await _test_contact_shadow()
 	_test_hit_invulnerability()
 	_test_stage_b_combat()
 	_test_boss()
@@ -85,6 +100,12 @@ func _check(cond: bool, name: String) -> void:
 	else:
 		_failed += 1
 		print("  [FAIL] ", name)
+
+## Human-readable list for a failure message. `%` with an *empty* array is a
+## format error in GDScript ("not enough arguments"), so never interpolate a
+## collection directly -- print "-" when there is nothing to report.
+func _list(items: Array) -> String:
+	return ", ".join(items) if not items.is_empty() else "-"
 
 ## The base curves are now scaled per floor (E7), so they are asserted against
 ## the floor-1 openspace profile, whose multipliers are exactly 1.0.
@@ -314,6 +335,212 @@ func _test_main_scene_wiring() -> void:
 
 ## Stage 1.2 (ROADMAP): the HUD must listen to the player's `charge_changed`
 ## signal and mirror the 0..1 charge into a visible indicator.
+## BUGS.md #17/#18 -- the "hang" and the auto-picked card. Three ways the caster
+## could get stuck after a cast, all reproduced here:
+## 1. a charge interrupted by a pause (the reward screen) never sees its key-up
+##    and roots the caster for the rest of the run;
+## 2. the press of a second spell key is dropped while the first is charging,
+##    and key repeat never re-fires it;
+## 3. the reward cards answer `ui_accept`, and jump is SPACE == `ui_accept`.
+func _test_spell_input_isolation() -> void:
+	var scene := await _spawn_run()
+	var player := scene.get_node_or_null("Player") as Player
+	var screen := scene.get_node_or_null("LevelUpScreen") as LevelUpScreen
+	# (1) A charge interrupted by the reward screen must not survive it.
+	player._start_charging(0)
+	_check(player.is_charging(), "charge started for the pause probe")
+	get_tree().paused = true
+	await get_tree().process_frame
+	get_tree().paused = false
+	await get_tree().process_frame
+	_check(not player.is_charging(), "unpausing cancels the interrupted charge")
+	_check(not player._is_rooted(), "the caster is not left rooted in place")
+	# (2) Releasing one spell while another key is down picks the second up.
+	player._start_charging(0)
+	player._handle_spell_input(_press_event(InputSetup.spell_action(0)))
+	# Synthesise "key 2 is physically down" through Input's action state.
+	Input.action_press(InputSetup.spell_action(1))
+	player._handle_spell_input(_release_event(InputSetup.spell_action(0)))
+	_check(player._charging_slot == 1, "releasing one spell picks up the held next one")
+	Input.action_release(InputSetup.spell_action(1))
+	player._handle_spell_input(_release_event(InputSetup.spell_action(1)))
+	_check(not player.is_charging(), "the hand-off charge releases cleanly")
+	# (3) No card may be keyboard-focusable.
+	if screen != null:
+		var card := UpgradeCardView.new()
+		card.setup(UpgradePool.build(player)[0])
+		add_child(card)
+		_check(card.focus_mode == Control.FOCUS_NONE,
+			"reward cards ignore ui_accept (jump is SPACE)")
+		card.queue_free()
+	_free_run(scene)
+
+func _press_event(action: StringName) -> InputEvent:
+	var ev := InputEventAction.new()
+	ev.action = action
+	ev.pressed = true
+	return ev
+
+func _release_event(action: StringName) -> InputEvent:
+	var ev := InputEventAction.new()
+	ev.action = action
+	ev.pressed = false
+	return ev
+
+## BUGS.md #20/#21 -- the difficulty reports: "kiting gets me cornered and
+## eaten" and "I cannot stop and read a spell".
+func _test_charge_movement_and_shove() -> void:
+	var scene := await _spawn_run()
+	var player := scene.get_node_or_null("Player") as Player
+	# (1) Charging slows the caster down but must NOT root it.
+	_check(player.CHARGE_MOVE_SCALE > 0.0 and player.CHARGE_MOVE_SCALE < 1.0,
+		"charging scales movement instead of stopping it")
+	player._start_charging(0)
+	_check(not player._is_rooted(), "a charge no longer roots the caster")
+	# (2) Being hit shoves the pack off, hardest for the one that hit.
+	var hitter := Enemy.new()
+	hitter.configure(Enemy.Kind.WATER_COOLER)
+	scene.add_child(hitter)
+	var bystander := Enemy.new()
+	bystander.configure(Enemy.Kind.WATER_COOLER)
+	scene.add_child(bystander)
+	await get_tree().physics_frame
+	player.global_position = Vector3(0.0, 0.5, 0.0)
+	hitter.global_position = Vector3(1.0, 0.0, 0.0)
+	bystander.global_position = Vector3(-1.0, 0.0, 0.0)
+	var far := Enemy.new()
+	far.configure(Enemy.Kind.WATER_COOLER)
+	scene.add_child(far)
+	far.global_position = Vector3(0.0, 0.0, 12.0)
+	await get_tree().physics_frame
+	player._invuln_time = 0.0
+	player.take_damage(1.0, hitter.global_position)
+	_check(hitter._knockback.length() > 0.0, "the demon that hit gets shoved")
+	_check(hitter._knockback.x > 0.0, "and it is pushed AWAY from the caster")
+	_check(bystander._knockback.length() > 0.0, "the rest of the pack is shoved too")
+	_check(far._knockback.length() <= 0.0, "demons out of melee reach are left alone")
+	# (3) The cast can be abandoned on purpose (right mouse button).
+	# Taking a hit stuns the caster on purpose -- that is the penalty for an
+	# interrupted spell -- so clear it first, and use a fresh slot (slot 0 is on
+	# the interrupt cooldown).
+	player._stun_time = 0.0
+	player._stunned = false
+	player._start_charging(1)
+	_check(player.is_charging(), "charge for the cancel probe")
+	player._handle_spell_input(_press_event(&"cancel_cast"))
+	_check(not player.is_charging(), "cancel_cast drops the charge without a hit")
+	_check(InputMap.has_action(&"cancel_cast"), "cancel_cast is bound")
+	for node: Node in [hitter, bystander, far]:
+		node.queue_free()
+	_free_run(scene)
+
+## The bolt is the charge orb at flight size, and it leaves from the charge in
+## the caster's palms.
+##
+## Three things here have each been wrong while building it, and none of them
+## show up as an error -- the bolt just looks wrong:
+##   * `look_at()` aims -Z, not +Z. The streak is parented to the bolt, so with
+##     the axis backwards it hangs off the FRONT and a shot fired away from the
+##     camera shows no streak at all.
+##   * The orb's parts are authored around +Z. A bolt that is not aligned the
+##     same way has its rings circling sideways.
+##   * Bolts must be aimed FROM the muzzle at the aim point. Parallel to the
+##     crosshair from a muzzle 10 cm below the eye puts every shot low.
+func _test_bolt_is_the_charge_orb() -> void:
+	var player: Player = load("res://scenes/player.tscn").instantiate()
+	add_child(player)
+	await get_tree().physics_frame
+	var view := player.get_node_or_null("Camera3D/Viewmodel") as Viewmodel
+	_check(view != null and view._orb != null, "the caster has a charge orb")
+	if view == null or view._orb == null:
+		remove_child(player)
+		player.free()
+		return
+
+	var muzzle := view.muzzle_position()
+	var bolt := Projectile.new()
+	bolt.setup(muzzle, Vector3(0.0, 0.0, -1.0), GameConfig.PROJECTILE_SPEED, 1.0, false)
+	add_child(bolt)
+	await get_tree().physics_frame
+	var carried := bolt.find_child("ChargeOrb", true, false)
+	_check(carried is ChargeOrb, "the bolt carries a ChargeOrb")
+	_check(bolt.global_position.distance_to(muzzle) < 0.6,
+		"the bolt starts at the charge in the palms (%.2f m)" %
+		bolt.global_position.distance_to(muzzle))
+
+	# +Z is the direction of travel, so the streak -- a child -- must sit on -Z.
+	var forward := bolt.global_transform.basis.z.normalized()
+	_check(forward.dot(bolt.velocity.normalized()) > 0.99,
+		"the bolt's +Z points the way it is flying")
+	var trail := bolt.get_node_or_null("Streak") as MeshInstance3D
+	_check(trail != null, "the bolt has a streak")
+	if trail != null:
+		_check(trail.position.z < 0.0,
+			"the streak trails BEHIND the bolt (z=%.2f)" % trail.position.z)
+		var streak_mat := trail.material_override as StandardMaterial3D
+		_check(streak_mat != null
+			and streak_mat.blend_mode == BaseMaterial3D.BLEND_MODE_ADD,
+			"the streak adds light instead of covering the floor")
+
+	# Firing aims from the muzzle, so the bolt converges on the aim point rather
+	# than running parallel to the crosshair a hand's width below it.
+	var weapon := player.get_node_or_null("AutoWeapon") as AutoWeapon
+	var target := player.global_position + Vector3(0.0, 1.6, -6.0)
+	weapon.fire(target, muzzle)
+	var flying := get_tree().get_nodes_in_group("player")
+	_check(flying.size() == 1, "the caster is still the only player")
+	var shot := _newest_projectile(bolt)
+	_check(shot != null, "firing spawns a bolt")
+	if shot != null:
+		var aim := (target - muzzle).normalized()
+		_check(shot.velocity.normalized().dot(aim) > 0.999,
+			"the bolt is aimed from the muzzle at the aim point")
+		shot.queue_free()
+		remove_child(shot)
+	remove_child(bolt)
+	bolt.free()
+	remove_child(player)
+	player.free()
+
+## The first Projectile in the tree that is not `skip`, or null. Bolts are added
+## to the current scene, which is a child of the root, so a search of the root's
+## own children would never see one.
+func _newest_projectile(skip: Node) -> Projectile:
+	for node in get_tree().root.find_children("*", "Projectile", true, false):
+		if node != skip:
+			return node as Projectile
+	return null
+
+func _test_props_are_solid() -> void:
+	var level := LevelBuilder.new()
+	add_child(level)
+	level.build(0)
+	# Found by group, not by name: Godot renames duplicate siblings, so only the
+	# first prop is actually called "Prop" (this test, and the NPC-overlap one,
+	# used to look at that single node and quietly ignore the other fourteen).
+	var furniture := get_tree().get_nodes_in_group("props")
+	_check(furniture.size() >= 8,
+		"the arena is furnished (%d pieces)" % furniture.size())
+	var bodied := 0
+	for node: Node3D in furniture:
+		for shape in node.find_children("*", "CollisionShape3D", true, false):
+			var owner_body := shape.get_parent() as CollisionObject3D
+			if owner_body != null and owner_body.collision_layer == 16:
+				bodied += 1
+				break
+	_check(bodied == furniture.size(),
+		"every desk/cabinet/cubicle/plant is solid (%d/%d)" % [bodied, furniture.size()])
+	# ...and the caster cannot walk through one.
+	await get_tree().physics_frame
+	var space := level.get_world_3d().direct_space_state
+	if not furniture.is_empty():
+		var centre: Vector3 = (furniture[0] as Node3D).global_position + Vector3(0.0, 0.45, 0.0)
+		var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(
+			centre - Vector3(1.4, 0.0, 0.0), centre + Vector3(1.4, 0.0, 0.0), 16))
+		_check(not hit.is_empty(), "a ray through furniture hits level collision")
+	remove_child(level)
+	level.free()
+
 func _test_charge_indicator() -> void:
 	var hud := HUD.new()
 	add_child(hud)
@@ -420,6 +647,57 @@ func _test_survivor_model() -> void:
 		_check(meshes.size() > 0, "survivor carries geometry (%d)" % meshes.size())
 		inst.free()
 
+## LEONARDO_PROMPTS.md defines a file-naming convention so a generated image is
+## picked up with no wiring. This pins the contract: the digit in the file name
+## is the KEYCAP the player presses (slot 0 == key "1"), not the array index.
+## If someone renames the convention, the ability bar silently shows the wrong
+## icon on the wrong key -- which is exactly what these checks prevent.
+func _test_art_naming_convention() -> void:
+	var spells := SpellLibrary.build_all()
+	_check(spells.size() == 10, "ten spells to illustrate (%d)" % spells.size())
+	# Every spell has a distinct icon path under the convention.
+	var paths := {}
+	for s in spells:
+		var path := ArtLibrary.spell_icon_path(s.spell_id)
+		paths[path] = s.display_name
+		_check(path.ends_with("spell_%d.png" % s.spell_id),
+			"spell %d -> %s" % [s.spell_id, path.get_file()])
+	_check(paths.size() == spells.size(), "no two spells share an icon file")
+	# The keycap mapping must agree with InputSetup for every slot, and the
+	# names on the keycaps must be the ones the prompts file documents.
+	var expected := {
+		1: "Слово Очищения", 2: "Святая Земля", 3: "Изгнание Гордыни",
+		4: "Гнев Небес", 5: "Небесный Молот", 6: "Цепная Молния",
+		7: "Кадило Возмездия", 8: "Святой Шаг", 9: "Зеркало Души",
+		0: "Страшный Суд",
+	}
+	var mismatched := 0
+	for slot in 10:
+		var id := InputSetup.spell_id_for_slot(slot)
+		var spell := SpellLibrary.find_by_id(spells, id)
+		if spell == null or spell.display_name != expected.get(id, ""):
+			mismatched += 1
+	_check(mismatched == 0, "keycap -> spell_id -> icon name all agree")
+	# Slot 0 is the key "1": the classic off-by-one this convention guards.
+	_check(InputSetup.spell_id_for_slot(0) == 1, "slot 0 maps to key 1 (not index 0)")
+	_check(ArtLibrary.spell_icon_path(0).ends_with("spell_0.png"), "the ultimate keeps the 0 file")
+	# The generated set now ships (tools/build_ui_art.py), so every spell must
+	# resolve to a real file. A gap here means an icon was renamed away from
+	# the convention and that slot silently fell back to procedural art.
+	var missing := 0
+	for s in spells:
+		if not ArtLibrary.has_spell_icon(s.spell_id):
+			missing += 1
+	_check(missing == 0, "all ten generated icons ship (%d missing)" % missing)
+	_check(ArtLibrary.has_menu_background(), "generated menu backdrop ships")
+	for s in spells:
+		var tex := ArtLibrary.spell_icon(s.spell_id)
+		_check(tex != null, "spell %d icon resolves (generated or placeholder)" % s.spell_id)
+	_check(ArtLibrary.menu_background() != null, "menu background resolves")
+	# A file that really existed must win over the placeholder.
+	_check(ArtLibrary._try_load("res://assets/ui/icons/does_not_exist.png") == null,
+		"missing art returns null instead of a broken texture")
+
 ## Stage 2.1 (ROADMAP): lock the spell parameters against GDD section 3 and the
 ## three mechanics that were only verified by code inspection before.
 func _test_spell_gdd() -> void:
@@ -463,6 +741,94 @@ func _test_spell_gdd() -> void:
 class _FakeShielded extends Node:
 	func is_shielded() -> bool:
 		return true
+
+## Every spell has to look like what it does.
+##
+## Before SpellVfx all ten drew the same expanding disc, which was only ever a
+## matter of taste to argue about; now each one stamps its geometry with a shape
+## tag, so "the ten spells are told apart at a glance" is a property of the code
+## that either holds or does not. Cast all ten into a bare tree and compare.
+func _test_spell_vfx() -> void:
+	# --- the three shared gradient textures are three different pictures -----
+	var radial := TextureLibrary.radial()
+	var ring := TextureLibrary.ring()
+	var puff := TextureLibrary.puff()
+	_check(radial != null and ring != null and puff != null,
+		"spell vfx has radial / ring / puff textures")
+	_check(radial != ring and ring != puff and radial != puff,
+		"radial, ring and puff are not the same image")
+
+	# --- light adds to the room, it does not paint over it ------------------
+	var mat := SpellVfx.glow(Color("#ffd166"))
+	_check(mat.blend_mode == BaseMaterial3D.BLEND_MODE_ADD, "spell vfx blends additively")
+	_check(mat.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED, "spell vfx is unshaded")
+	_check(mat.cull_mode == BaseMaterial3D.CULL_DISABLED, "spell vfx shows from behind")
+	# A gain above 1 is the whole reason the big shapes had to be tuned down:
+	# two overlapping ground rings at full strength clip to white.
+	_check(SpellVfx.RING_GAIN < 1.0 and SpellVfx.DOME_GAIN < SpellVfx.BURST_GAIN,
+		"big flat shapes are dimmer than small bright ones")
+
+	# --- cast all ten and compare what each one drew ------------------------
+	var dummies: Array = []
+	for spot in [Vector3(2.5, 0.0, -2.0), Vector3(-2.8, 0.0, -3.5),
+			Vector3(1.0, 0.0, -6.0)]:
+		var e := Enemy.new()
+		e.configure(Enemy.Kind.PAPERWORK_PHANTOM)
+		add_child(e)
+		e.global_position = spot
+		e.health = 99999.0
+		e.max_health = 99999.0
+		dummies.append(e)
+	var caster := Vector3(0.0, 0.0, 0.0)
+	var target := Vector3(0.0, 0.0, -6.0)
+	var signatures := {}
+	for s in SpellLibrary.build_all():
+		var shapes: Array[String] = []
+		s.cast_effect(caster, target, get_tree())
+		# A fifth of a second: long enough for the censer to take its first
+		# breath, short enough that nothing has finished and freed itself.
+		await get_tree().create_timer(0.2).timeout
+		for fx in get_children():
+			if fx is EffectBase:
+				for kind in SpellVfx.shapes_of(fx):
+					if not shapes.has(kind):
+						shapes.append(kind)
+				fx.free()
+		for chunk in get_children():
+			if chunk is DebrisChunk:
+				chunk.free()
+		shapes.sort()
+		signatures[s.spell_id] = shapes
+		_check(shapes.size() >= 2,
+			"spell %d draws %d kinds of shape, not just a circle"
+			% [s.spell_id, shapes.size()])
+
+	# The actual claim: no two spells share a picture. Two identical signature
+	# lists here means two spells the player cannot tell apart on screen.
+	var clashes := 0
+	var ids := signatures.keys()
+	for i in ids.size():
+		for j in range(i + 1, ids.size()):
+			if signatures[ids[i]] == signatures[ids[j]]:
+				clashes += 1
+				_check(false, "spells %d and %d draw the same shapes" % [ids[i], ids[j]])
+	_check(clashes == 0, "all ten spells draw a distinct set of shapes")
+
+	# --- and the shapes are the ones that mean what the spell does ----------
+	_check((signatures[6] as Array).has("bolt"), "chain lightning draws jagged bolts")
+	_check((signatures[9] as Array).has("dome"), "mirror of the soul raises a dome")
+	_check((signatures[5] as Array).has("column"), "heavenly hammer drops a column of light")
+	_check((signatures[0] as Array).has("column"), "last judgement drops a column of light")
+	_check((signatures[2] as Array).has("runes"), "holy ground draws a rune circle")
+	_check((signatures[3] as Array).has("implode"), "expulsion of pride collapses inward")
+	_check((signatures[4] as Array).has("streak"), "wrath of heaven draws a beam streak")
+	_check((signatures[7] as Array).has("puff"), "censer of vengeance trails smoke")
+	_check((signatures[8] as Array).has("streak"), "holy step draws the path it took")
+
+	for d in dummies:
+		if is_instance_valid(d):
+			remove_child(d)
+			d.free()
 
 ## Stage 2.2 (ROADMAP): the third archetype is a ranged demon that fires hex
 ## bolts and keeps its distance; the spawner can pick it.
@@ -540,37 +906,269 @@ func _test_npc_silhouette() -> void:
 	npc.free()
 
 ## Bug tracker #2: no decorative prop may overlap a survivor NPC's tile.
+## Found by group: Godot renames duplicate siblings, so filtering on the node
+## name "Prop" saw one of the fifteen pieces of furniture and passed on the
+## strength of it.
 func _test_props_clear_of_npcs() -> void:
 	var level := LevelBuilder.new()
 	add_child(level)
 	level.build(0)
 	var overlaps := 0
-	for child in level.get_children():
-		if not (child is MeshInstance3D) or child.name != "Prop":
-			continue
+	for node: Node3D in get_tree().get_nodes_in_group("props"):
 		for p in level.npc_points:
-			if (child as Node3D).global_position.distance_to(p) < LevelBuilder.BLOCK * 0.75:
+			if node.global_position.distance_to(p) < LevelBuilder.BLOCK * 0.75:
 				overlaps += 1
 	_check(overlaps == 0, "no prop overlaps a survivor NPC (%d overlaps)" % overlaps)
 	remove_child(level)
 	level.free()
 
 ## Bug #3b: the caster's own body must never render in the first-person camera
-## (the T-posed hero clipped through the view as a "white box").
+## (the T-posed hero clipped through the view as a "white box").  The casting
+## hands are the deliberate opposite -- they hang off that same camera and must
+## stay visible, so they are checked separately rather than swept up by the body.
 func _test_first_person_body_hidden() -> void:
 	var player: Player = load("res://scenes/player.tscn").instantiate()
 	add_child(player)
 	var bit := 1 << (Player.OWN_BODY_LAYER - 1)
 	_check((player._camera.cull_mask & bit) == 0, "first-person camera ignores the caster's own body layer")
-	var meshes := player.find_children("*", "MeshInstance3D", true, false)
-	_check(meshes.size() > 0, "caster model is attached")
+	var body := player.get_node_or_null("ModelRoot")
+	_check(body != null, "caster has a ModelRoot")
+	var body_meshes := body.find_children("*", "MeshInstance3D", true, false) if body != null else []
+	_check(body_meshes.size() > 0, "caster model is attached")
 	var on_layer := true
-	for m in meshes:
+	for m in body_meshes:
 		if (m.layers & bit) == 0:
 			on_layer = false
 	_check(on_layer, "caster model renders only on the own-body layer")
 	remove_child(player)
 	player.free()
+
+## First-person viewmodel (BlenderInstruction lot 1b): two hands parented to the
+## camera, pushed back far enough that the forearm stubs fall behind the near
+## plane, and reacting to the same four states as the body.
+func _test_viewmodel_arms() -> void:
+	var player: Player = load("res://scenes/player.tscn").instantiate()
+	add_child(player)
+	await get_tree().process_frame
+	var view := player.get_node_or_null("Camera3D/Viewmodel") as Viewmodel
+	_check(view != null, "viewmodel is parented to the camera")
+	_check(ModelLibrary.has_model(ModelLibrary.VIEWMODEL_ARMS),
+		"viewmodel_arms.glb exists on disk")
+	if view == null:
+		remove_child(player)
+		player.free()
+		return
+	var meshes := view.find_children("*", "MeshInstance3D", true, false)
+	_check(meshes.size() > 0, "viewmodel carries geometry (%d meshes)" % meshes.size())
+	# The hands must NOT be on the own-body layer, or the camera culls them.
+	var bit := 1 << (Player.OWN_BODY_LAYER - 1)
+	var visible_to_camera := true
+	for m in meshes:
+		if (m.layers & bit) != 0:
+			visible_to_camera = false
+	_check(visible_to_camera, "hands render for the first-person camera")
+	# The cut ends of the forearms sit behind the eye so the near plane clips
+	# them; the fingertips stay out in front of it.
+	var lo := Vector3(1e9, 1e9, 1e9)
+	var hi := Vector3(-1e9, -1e9, -1e9)
+	for m in meshes:
+		var b: AABB = (m as MeshInstance3D).global_transform * (m as MeshInstance3D).get_aabb()
+		lo = Vector3(minf(lo.x, b.position.x), minf(lo.y, b.position.y), minf(lo.z, b.position.z))
+		hi = Vector3(maxf(hi.x, b.end.x), maxf(hi.y, b.end.y), maxf(hi.z, b.end.z))
+	var cam_z: float = player._camera.global_position.z
+	_check(lo.z < cam_z, "fingertips reach in front of the eye (%.2f < %.2f)" % [lo.z, cam_z])
+	_check(hi.z > cam_z, "forearm stubs are cut off behind the eye (%.2f > %.2f)" % [hi.z, cam_z])
+	# Every state the body knows must be accepted by the hands.
+	for s in PlayerAnimation.CLIPS:
+		view.set_state(s)
+		_check(view.state == s, "viewmodel accepts the '%s' state" % s)
+	view.set_state("nonsense")
+	_check(view.state == Viewmodel.IDLE, "an unknown state falls back to idle")
+
+	# The orb in the cupped palms has to react to the charge, otherwise holding a
+	# spell down shows nothing at all inside the arena view.
+	_check(view._orb != null, "the charge orb is wired to a mesh")
+	if view._orb != null:
+		# The orb grows from ORB_MIN to ORB_MAX with the charge. Compare against
+		# those constants rather than against the scale the .glb happens to ship
+		# with: the viewmodel is already in the tree here, so `_process` has
+		# shrunk the orb to ORB_MIN before the first read, and any "did it
+		# change from its authored size" assertion becomes a coin flip on when
+		# the test happens to be scheduled.
+		view.set_state(Viewmodel.CAST_HOLD)
+		view.set_charge(0.0)
+		view._process(0.016)
+		var empty_scale: float = view._orb.scale.length()
+		view.set_charge(1.0)
+		view._process(0.016)
+		var full_scale: float = view._orb.scale.length()
+		_check(full_scale > empty_scale * 1.5,
+			"the orb swells with the charge (%.2f -> %.2f)" % [empty_scale, full_scale])
+		_check(is_equal_approx(empty_scale, Viewmodel.ORB_MIN),
+			"an empty palm shrinks the orb to ORB_MIN (%.2f)" % empty_scale)
+		# At full charge while the spell is held the orb also pulses, so the top
+		# of the range is ORB_MAX * the pulse amplitude, not ORB_MAX itself.
+		_check(full_scale >= Viewmodel.ORB_MAX and full_scale <= Viewmodel.ORB_MAX * 1.07,
+			"a full charge swells the orb to ORB_MAX (%.2f)" % full_scale)
+		view.set_charge(0.0)
+
+	# The charge has to be more than a white ball. It is a ChargeOrb -- the same
+	# object the holy bolt is built from -- so the test that matters is that it
+	# really is one, and that its parts are where they claim to be.
+	_check(view._orb is ChargeOrb, "the charge is a ChargeOrb")
+	if view._orb is ChargeOrb:
+		var rings := view._orb.find_child("Rings", true, false)
+		var motes := view._orb.find_child("Motes", true, false)
+		var glow := view._orb.find_child("Glow", true, false)
+		_check(rings != null and motes != null and glow != null,
+			"charge assembly has rings, motes and a glow")
+		_check(rings.get_child_count() == 2, "both rings are built")
+		_check(motes.get_child_count() == ChargeOrb.MOTE_COUNT,
+			"all %d motes are built" % ChargeOrb.MOTE_COUNT)
+		# Rings are authored around the orb's own origin. One placed anywhere
+		# else -- a leftover pivot at the model's root, say -- circles empty air
+		# instead of the light, which is the subtlest way this can be wrong.
+		var off := 0.0
+		for child in rings.get_children():
+			off += ((child as MeshInstance3D).get_aabb().get_center()).length()
+		_check(off < 0.001, "rings are centred on the orb (%.4f m off)" % off)
+
+	# The orb takes the SPELL's colour. This is the only readout that says which
+	# of nine is charging without leaving the arena view, so it is not cosmetic.
+	var violet := Color("#c58bff")
+	view.set_spell_colour(violet)
+	# Enough frames for the colour to finish easing -- the orb sweeps to the new
+	# spell rather than snapping, so a test that reads it immediately sees the
+	# old colour and would pass for the wrong reason.
+	for i in 40:
+		view._process(0.016)
+	var core_mat := (view._orb.find_child("Core", true, false) as MeshInstance3D).material_override as StandardMaterial3D
+	var glow_mat := (view._orb.find_child("Glow", true, false) as MeshInstance3D).material_override as StandardMaterial3D
+	_check(core_mat != null and glow_mat != null, "charge parts carry runtime materials")
+	if core_mat != null and glow_mat != null:
+		var got := core_mat.albedo_color
+		var want := violet.lerp(Color.WHITE, ChargeOrb.CORE_WHITEN) * ChargeOrb.CORE_GAIN
+		_check(got.r > want.r - 0.02 and got.b > want.b - 0.02 and got.g < want.g + 0.02,
+			"the orb takes the spell's colour (%s vs %s)" % [got, want])
+		# The glow adds light on top of the room, so its albedo must actually be
+		# the colour; a black albedo under ADD contributes nothing at all.
+		_check(glow_mat.albedo_color.b > 0.2 and glow_mat.albedo_color.g > 0.1,
+			"the glow carries the spell colour too (%s)" % glow_mat.albedo_color)
+
+	# Bolts leave the charge in the palms, not from the caster's own head. The
+	# muzzle has to be in front of the eye -- that is the whole difference
+	# between "a shot came out of the thing I was holding" and "a shot appeared".
+	var muzzle := view.muzzle_position()
+	var eye := player._camera.global_position
+	_check(muzzle.distance_to(eye) > 0.15,
+		"bolts leave from in front of the eye (%.2f m)" % muzzle.distance_to(eye))
+	_check(muzzle.y < eye.y, "the muzzle sits between the hands, below the eye")
+	view.set_spell_colour(Viewmodel.NEUTRAL_CHARGE)
+
+	# Firing and casting are separate flourishes: the auto weapon fires far more
+	# often, so it gets its own, shorter kick.
+	view.play_fire()
+	var fire_time: float = view._fire_left
+	view.play_release()
+	_check(fire_time > 0.0, "firing kicks the hands")
+	_check(view._fire_left <= Viewmodel.FIRE_TIME, "the fire kick is capped")
+	_check(view._release_left > 0.0, "casting kicks the hands")
+
+	# Charging must reach the hands through the player, not only by hand.
+	var player2: Player = load("res://scenes/player.tscn").instantiate()
+	add_child(player2)
+	await get_tree().process_frame
+	var view2 := player2.get_node_or_null("Camera3D/Viewmodel") as Viewmodel
+	_check(view2 != null, "a second caster gets a viewmodel too")
+	if view2 != null:
+		player2.set("_charging_slot", 0)
+		player2.set("_charge_timer", 999.0)
+		player2.call("_tick_charge", 0.0)
+		_check(view2.charge > 0.0, "charging a spell reaches the hands (%.2f)" % view2.charge)
+		player2.set("_charging_slot", -1)
+		player2.call("_tick_charge", 0.0)
+		_check(is_zero_approx(view2.charge), "releasing clears the hands' charge")
+		remove_child(player2)
+		player2.free()
+
+	remove_child(player)
+	player.free()
+
+## The caster's own shadow has to exist where the caster can SEE it.
+##
+## The body casts a real shadow, and always did, but the sun throws it ~1.7 m
+## behind the caster while the first-person camera sits exactly where the body
+## is -- so from the caster's own eyes there was nothing at all on the floor,
+## and turning around revealed a human silhouette lying in the room with
+## nothing attached to it. ContactShadow is the patch that fixes the first half
+## without touching the second.
+##
+## These are the properties that decide whether it works, each of which has
+## been wrong at least once while building it:
+##   * it must NOT sit on the own-body layer, or the caster's camera culls it;
+##   * it must not cast, or it becomes a second shadow under the real one;
+##   * it must lie FLAT -- QuadMesh faces +Z, and a patch left in the default
+##     orientation is a zero-thickness billboard that draws nothing at all;
+##   * and it must go away in the air, because a full-strength patch under a
+##     jump reads as a hole in the floor.
+func _test_contact_shadow() -> void:
+	var player: Player = load("res://scenes/player.tscn").instantiate()
+	add_child(player)
+	# A floor to probe: the patch only appears when the ray finds level geometry.
+	var ground := StaticBody3D.new()
+	ground.collision_layer = 16
+	ground.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(8.0, 0.2, 8.0)
+	shape.shape = box
+	shape.position = Vector3(0.0, -0.1, 0.0)
+	ground.add_child(shape)
+	add_child(ground)
+	player.global_position = Vector3.ZERO
+	# Physics frames, not process frames: the patch is dropped by a physics ray.
+	for i in 4:
+		await get_tree().physics_frame
+
+	var patch := player.get_node_or_null("ContactShadow") as ContactShadow
+	_check(patch != null, "caster carries a contact shadow patch")
+	if patch == null:
+		remove_child(player)
+		player.free()
+		remove_child(ground)
+		ground.free()
+		return
+	var mesh := patch.get_node_or_null("Patch") as MeshInstance3D
+	_check(mesh != null, "patch carries a mesh")
+	if mesh == null:
+		return
+	var body_bit := 1 << (Player.OWN_BODY_LAYER - 1)
+	_check((mesh.layers & body_bit) == 0, "patch is NOT on the own-body layer (the caster must see it)")
+	_check((player._camera.cull_mask & mesh.layers) != 0, "first-person camera renders the patch")
+	_check(mesh.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+		"patch casts no shadow of its own")
+	# Flat on the floor: the patch's own up must be its +Z, the axis QuadMesh
+	# faces. Basis.IDENTITY here is the standing-on-edge bug.
+	var z_axis := mesh.global_transform.basis.z
+	_check(z_axis.dot(Vector3.UP) > 0.9, "patch lies flat on the floor (z=%s)" % z_axis)
+	_check(mesh.visible, "patch is drawn while the caster stands on the floor")
+	_check(mesh.global_position.distance_to(Vector3(0.0, 0.0, 0.0)) < 0.5,
+		"patch lands on the floor under the feet (%s)" % mesh.global_position)
+
+	# Airborne: the patch must fade out rather than sit on the ground below.
+	player.global_position = Vector3(0.0, ContactShadow.FADE_END + 0.5, 0.0)
+	for i in 4:
+		await get_tree().physics_frame
+	_check(not mesh.visible, "patch hides once the caster is clear of the floor")
+	player.global_position = Vector3.ZERO
+	for i in 4:
+		await get_tree().physics_frame
+	_check(mesh.visible, "patch comes back when the caster lands")
+
+	remove_child(player)
+	player.free()
+	remove_child(ground)
+	ground.free()
 
 ## Bug #3 difficulty: i-frames stop a pack of contacts stacking into one instant.
 func _test_hit_invulnerability() -> void:
@@ -1202,6 +1800,43 @@ func _test_e8_hp_bars_and_minimap() -> void:
 	# Minimap is present and visible during a run.
 	_check(hud != null and hud._minimap != null, "HUD has a minimap")
 	_check(hud._minimap.visible, "minimap visible during a run")
+	# ...and actually readable. It used to be a fixed 0.35 scale with markers
+	# sized in pixels, which made a 14x10 arena 39px wide and every demon a
+	# single dot. The map now scales to fit and draws in cells.
+	var mm := hud._minimap
+	var lvl := scene.get_node_or_null("Level") as LevelBuilder
+	_check(lvl != null, "run has a level to map")
+	if lvl != null and mm != null:
+		var map_w := float(lvl.cells_x) * mm.scale.x
+		var map_h := float(lvl.cells_z) * mm.scale.y
+		_check(map_w >= 120.0 and map_h >= 90.0,
+			"minimap covers %dx%d px on screen" % [int(map_w), int(map_h)])
+		var screen := hud.get_viewport().get_visible_rect().size
+		_check(mm.position.x >= 0.0 and mm.position.x + map_w <= screen.x,
+			"minimap sits inside the window")
+		var marker := 0.0
+		for c in mm._circles:
+			marker = maxf(marker, float(c[1]) * mm.scale.x)
+		_check(marker >= 3.0, "markers stay visible at %.1f px radius" % marker)
+		# Facing cone: it has to follow the camera, not sit at some default.
+		# `look_direction()` flattens the aim to XZ, so the comparison is done
+		# in that plane -- full 3D vectors would disagree whenever the caster
+		# looks up or down, which is most of the time.
+		_check(mm.has_facing(), "minimap draws the facing cone")
+		if mm.has_facing():
+			# Camera looks along -Z; at yaw 0 that is world -Z. Map space is
+			# world +X right / +Z down, so the expected angle is atan2(z, x)
+			# over (-cos yaw, -sin yaw).
+			var expected := atan2(-cos(player._camera.rotation.y), -sin(player._camera.rotation.y))
+			_check(absf(angle_difference(mm.facing_angle(), expected)) < 0.05,
+				"facing cone follows the camera (map %.2f vs yaw %.2f)" % [mm.facing_angle(), expected])
+			# Turning the caster must turn the cone with it.
+			var before := mm.facing_angle()
+			player._camera.rotation.y += PI * 0.5
+			await get_tree().process_frame
+			await get_tree().physics_frame
+			_check(absf(angle_difference(mm.facing_angle(), before)) > 1.0,
+				"turning the caster turns the cone")
 	demon.queue_free()
 	_free_run(scene)
 
@@ -1229,6 +1864,160 @@ func _test_training_hall() -> void:
 	_check(dummies.size() == 4, "training has 4 static dummies (%d)" % dummies.size())
 	training.queue_free()
 
+## Every arena must be one connected floor. Two authoring bugs broke that and
+## both showed up in play as "a partition walled the demons off": a cover pillar
+## counted as a wall (which sealed the centre of Server Hall), and map rows one
+## character off the declared width (which cut a hole clean through the outer
+## wall that the caster and the demons could walk out of).
+func _test_maps_have_no_dead_pockets() -> void:
+	for i in LevelBuilder.LEVELS.size():
+		var entry: Dictionary = LevelBuilder.LEVELS[i]
+		var floor_name: String = entry["name"]
+		var rows: Array = entry["map"]
+		var width: int = (rows[0] as String).length()
+		var ragged := 0
+		for z in rows.size():
+			if (rows[z] as String).length() != width:
+				ragged += 1
+		_check(ragged == 0, "%s rows are all %d wide (%d ragged)" % [floor_name, width, ragged])
+
+		var level := LevelBuilder.new()
+		add_child(level)
+		level.build(i)
+		# A row shorter than the declared width leaves cells with no glyph at
+		# all; the build loop reads those as open floor and builds no wall.
+		var missing := 0
+		for z in level.cells_z:
+			for x in level.cells_x:
+				if level.glyph_at(x, z) == "":
+					missing += 1
+		_check(missing == 0, "%s has no glyph-less cells (%d)" % [floor_name, missing])
+
+		var reach: Dictionary = level._reachable_from_player()
+		var sealed := 0
+		for z in level.cells_z:
+			for x in level.cells_x:
+				var g: String = level.glyph_at(x, z)
+				if g == "" or g == "#":
+					continue
+				if not reach.has(Vector2i(x, z)):
+					sealed += 1
+		_check(sealed == 0, "%s has no sealed ground pocket (%d cells)" % [floor_name, sealed])
+
+		# The spawn pool must still cover most of the floor. It used to collapse
+		# to single digits on floors 4+, which is what made whole wings of the
+		# big arenas feel empty and the few demons that did appear feel walled off.
+		var pool := level.spawn_cells.size()
+		var ratio := float(pool) / maxf(1.0, float(level.free_cells.size()))
+		_check(ratio > 0.5, "%s spawn pool is %d of %d floor cells (%.0f%%)" % [
+			floor_name, pool, level.free_cells.size(), ratio * 100.0])
+		remove_child(level)
+		level.free()
+
+## A demon that has been squeezed out of the arena -- flung skyward by the
+## solver at a stair ramp, or wedged inside a wall -- stays in the "enemies"
+## group. That is a red dot on the minimap with nothing behind it, an
+## unkillable target, and a hole in the wave budget. Both failure modes have to
+## end with the demon back on a legal tile.
+func _test_lost_demons_are_recovered() -> void:
+	var scene := await _spawn_run()
+	var level := scene.get_node_or_null("Level") as LevelBuilder
+	_check(level != null, "run has a level")
+	if level == null:
+		_free_run(scene)
+		return
+	# Somewhere on the floor, well clear of the caster.
+	var open_cell := Vector2i(-1, -1)
+	for z in level.cells_z:
+		for x in level.cells_x:
+			if level.is_blocked(level.cell_centre(x, z)):
+				continue
+			if level.cell_centre(x, z).distance_to(scene.get_node("Player").global_position) > 12.0:
+				open_cell = Vector2i(x, z)
+				break
+		if open_cell.x >= 0:
+			break
+
+	var fallen := Enemy.new()
+	fallen.configure(Enemy.Kind.PAPERWORK_PHANTOM)
+	scene.add_child(fallen)
+	fallen.global_position = Vector3(0.0, -80.0, 0.0)
+	for _i in 4:
+		await get_tree().physics_frame
+	_check(fallen.global_position.y > -1.0,
+		"a demon below the arena is put back (y=%.2f)" % fallen.global_position.y)
+
+	var wedged := Enemy.new()
+	wedged.configure(Enemy.Kind.WATER_COOLER)
+	scene.add_child(wedged)
+	# Embed it in a solid wall cell: the capsule ends up entirely inside a block.
+	var wall := Vector2i(-1, -1)
+	for z in level.cells_z:
+		for x in level.cells_x:
+			if level.is_blocked(level.cell_centre(x, z)) \
+					and level.cell_centre(x, z).distance_to(scene.get_node("Player").global_position) > 12.0:
+				wall = Vector2i(x, z)
+				break
+		if wall.x >= 0:
+			break
+	if wall.x >= 0:
+		wedged.global_position = level.cell_centre(wall.x, wall.y) + Vector3(0.0, 0.9, 0.0)
+		# Keep the caster alive for the whole probe. The run is unattended here,
+		# so the spawner is free to kill it within the 7 s window -- and a dead
+		# caster pauses the tree, which freezes the wedged demon in place and
+		# fails this test for a reason that has nothing to do with recovery.
+		var player := scene.get_node_or_null("Player") as Player
+		# What matters is that the demon gets OUT, not where it happens to stand
+		# 7 s later: once it is walking again it may well walk back into a pillar
+		# on its own, and asserting on the final position made this check a coin
+		# flip that failed roughly one run in three.
+		var freed_on := -1
+		for i in 420:
+			if is_instance_valid(player) and player.is_alive():
+				player.health = player.max_health
+			await get_tree().physics_frame
+			if freed_on < 0 and not level.is_blocked(wedged.global_position):
+				freed_on = i
+		_check(not get_tree().paused, "the tree is still running after the wedge probe")
+		_check(freed_on >= 0, "a demon embedded in a wall is freed (pos=%s)" % wedged.global_position)
+		_check(wedged.global_position.y > -1.0 and wedged.global_position.y < Enemy.RECOVER_Y_MAX,
+			"the freed demon is back at ground level (y=%.2f)" % wedged.global_position.y)
+	else:
+		_check(false, "found a wall cell to wedge a demon into")
+	fallen.queue_free()
+	wedged.queue_free()
+	_free_run(scene)
+
+## A SpawnerPortal is built in code, not from a .tscn, so it only has a floor to
+## stand on if it makes its own collision shape. It did not: is_on_floor() stayed
+## false forever, the copier fell out of the arena, and every demon it spawned
+## came out at that depth -- invisible, unkillable, still counted against the
+## spawn budget and still drawn on the minimap.
+func _test_portal_stays_on_the_floor() -> void:
+	var scene := await _spawn_run()
+	var level := scene.get_node_or_null("Level") as LevelBuilder
+	var open_cell := level.cell_centre(2, 2)
+	var portal := SpawnerPortal.new()
+	scene.add_child(portal)
+	portal.global_position = open_cell + Vector3(0.0, 0.5, 0.0)
+	# Long enough for the copier to settle AND for it to disgorge a demon
+	# (SPAWN_INTERVAL is 3.5 s).
+	for _i in 260:
+		await get_tree().physics_frame
+	_check(portal.is_on_floor(), "portal rests on the arena floor")
+	_check(portal.global_position.y > -0.6 and portal.global_position.y < 0.6,
+		"portal stays at floor level (y=%.2f)" % portal.global_position.y)
+	var strays := 0
+	var spawned := 0
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if e is Enemy:
+			spawned += 1
+			if e.global_position.y < -1.0:
+				strays += 1
+	_check(spawned > 0, "portal disgorged a demon (%d)" % spawned)
+	_check(strays == 0, "no demon spawned below the floor (%d strays)" % strays)
+	_free_run(scene)
+
 ## HUD skill bar: locked spells are hidden, every visible slot shows its key.
 func _test_hud_slots_ui() -> void:
 	var player: Player = load("res://scenes/player.tscn").instantiate()
@@ -1251,6 +2040,15 @@ func _test_hud_slots_ui() -> void:
 				# slot i maps to digit i+1 modulo 10, e.g. slot 9 -> "0"
 				has_key = true
 		_check(has_key, "visible slot has a key label")
+		# The generated icons are 256px. A TextureRect reports the texture size
+		# as its minimum unless expand_mode overrides it, which used to size
+		# every slot to 256 and spill the bar across the screen. Pin the
+		# geometry so the fallback art (24px) and the shipped art agree.
+		_check(holder.size.x <= HUD.ICON + 1.0 and holder.size.y <= HUD.ICON + 1.0,
+			"slot keeps its %dpx box (%s)" % [HUD.ICON, holder.size])
+		var icon := holder.get_child(0) as TextureRect
+		_check(icon != null and icon.size.x <= HUD.ICON + 1.0,
+			"icon rect stays inside the slot")
 		break
 	remove_child(hud)
 	hud.free()
@@ -1317,6 +2115,163 @@ func _test_arena_content() -> void:
 		"four columns per stairwell (%d)" % level.ceiling_column_count)
 	remove_child(level)
 	level.free()
+
+## Stage 6 (P2) - the office rooms. `RoomDressing` skins the arena's collision
+## boxes with panelled walls, windows onto space, doors that never open, a
+## dropped ceiling and pendant lamps. What matters is not just that the pieces
+## exist, but that they exist on EVERY arena and that they add no collision --
+## a trim box that became solid would trap the caster or a demon, which is the
+## one way a cosmetic pass can break a working arena.
+func _test_room_dressing() -> void:
+	var level := LevelBuilder.new()
+	add_child(level)
+	level.build(0)
+	var room := level.get_node_or_null("Room")
+	_check(room != null, "dressing hangs off the level under one node")
+	_check(room != null and room is Node3D, "the dressing node is a plain Node3D")
+	_check(level.window_count > 0, "the lobby has windows (%d)" % level.window_count)
+	_check(level.door_count > 0, "the lobby has doors that stay shut (%d)" % level.door_count)
+	_check(level.sign_count == level.door_count, "every door carries a name plate (%d)" % level.sign_count)
+	_check(level.lamp_count > 0, "the room is lit by pendant lamps (%d)" % level.lamp_count)
+	_check(level.trimmed_faces > 0, "wall faces carry panelling (%d)" % level.trimmed_faces)
+	# A sign is only readable if the plate exists as text, not as a blank box.
+	var signs := room.find_children("*", "Label3D", true, false) if room != null else []
+	_check(signs.size() == level.sign_count, "signs are Label3D text (%d)" % signs.size())
+	var named := 0
+	for s in signs:
+		if String((s as Label3D).text).length() > 3:
+			named += 1
+	_check(named == signs.size(), "no sign is blank")
+	# Real lights, not just glowing quads.
+	var lights := room.find_children("*", "OmniLight3D", true, false) if room != null else []
+	_check(lights.size() == level.lamp_count, "one real light per lamp (%d)" % lights.size())
+	remove_child(level)
+	level.free()
+
+	# Every registered arena gets the same treatment -- a room with no windows
+	# is how this pass would silently rot on the maps nobody shoots.
+	var bare: Array[String] = []
+	for i in LevelBuilder.LEVELS.size():
+		var lv := LevelBuilder.new()
+		add_child(lv)
+		lv.build(i)
+		if lv.window_count < 2 or lv.door_count < 1 or lv.lamp_count < 1 or lv.trimmed_faces < 4:
+			bare.append(String(LevelBuilder.LEVELS[i]["name"]))
+		remove_child(lv)
+		lv.free()
+	_check(bare.is_empty(), "all %d arenas are dressed (%s)" % [LevelBuilder.LEVELS.size(), _list(bare)])
+
+	# The dressing must be decoration, not architecture: no collider anywhere
+	# under it, or it can wedge the caster, a demon or a bolt.
+	var lv2 := LevelBuilder.new()
+	add_child(lv2)
+	lv2.build(0)
+	var solids: Array[String] = []
+	var walker := lv2.get_node_or_null("Room")
+	if walker != null:
+		for node in walker.find_children("*", "", true, false):
+			if node is CollisionObject3D or node is Area3D:
+				solids.append(str(node.get_class()))
+	_check(solids.is_empty(), "dressing adds no collider (%s)" % _list(solids))
+	# RoomDressing mirrors the level's grid constants; if either is retuned the
+	# trim would float off the wall or sink into it, so pin them together.
+	_check(is_equal_approx(RoomDressing.BLOCK, LevelBuilder.BLOCK), "dressing mirrors the 4 m grid")
+	_check(is_equal_approx(RoomDressing.WALL_H, LevelBuilder.WALL_H), "dressing mirrors the wall height")
+	remove_child(lv2)
+	lv2.free()
+
+## The window is a picture of a window, not a hole in the level: the wall
+## behind it must still block, and the '+' doorways must still be walkable.
+## Both are raycast probes, so a regression here shows up as geometry rather
+## than as a silently different room.
+func _test_room_dressing_leaves_openings_clear() -> void:
+	# Just inside the doorway gap: a chest-height ray has to pass through the
+	# opening. The probe stops 5 cm short of +/-DOOR_GAP/2 on purpose -- the
+	# flanking wall blocks begin exactly at that distance, so a ray ending
+	# exactly there grazes their faces and reports a hit for doorways that are
+	# in fact completely open (it did so on two of Meeting Pods' four).
+	var half_gap := LevelBuilder.DOOR_GAP * 0.5 - 0.05
+	var level := LevelBuilder.new()
+	add_child(level)
+	level.build(0)
+	await get_tree().physics_frame
+	var space := level.get_world_3d().direct_space_state
+	var sealed := true
+	var probes := 0
+	for z in level.cells_z:
+		for x in level.cells_x:
+			if level.glyph_at(x, z) != "#":
+				continue
+			var outward := Vector3i.ZERO
+			for d: Vector3i in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
+				var nx: int = x + d.x
+				var nz: int = z + d.z
+				if nx < 0 or nz < 0 or nx >= level.cells_x or nz >= level.cells_z:
+					outward = d
+			if outward == Vector3i.ZERO:
+				continue
+			probes += 1
+			var from: Vector3 = level.cell_centre(x, z) + Vector3(0.0, 1.8, 0.0)
+			var dir := Vector3(outward.x, 0.0, outward.z).normalized()
+			var params := PhysicsRayQueryParameters3D.create(from, from + dir * 6.0, 16)
+			# The probe starts inside the wall block it is testing, and Godot
+			# ignores hits from inside a shape by default.
+			params.hit_from_inside = true
+			if space.intersect_ray(params).is_empty():
+				sealed = false
+	_check(probes > 0, "arena has outer walls to probe (%d)" % probes)
+	_check(sealed, "every outer wall blocks, windows included")
+	remove_child(level)
+	level.free()
+	# Every doorway of EVERY arena, not just the lobby: the player picked the
+	# arena at random, so "the room divided by partitions I cannot cross" only
+	# showed up on some runs. Furniture became solid in BUGS.md #22, so this now
+	# also guards against a desk being scattered across an opening.
+	var blocked := 0
+	var doorways := 0
+	var sealed_arenas: Array[String] = []
+	for i in LevelBuilder.LEVELS.size():
+		var level_i := LevelBuilder.new()
+		add_child(level_i)
+		level_i.build(i)
+		await get_tree().physics_frame
+		var space_i := level_i.get_world_3d().direct_space_state
+		for z in level_i.cells_z:
+			for x in level_i.cells_x:
+				if level_i.glyph_at(x, z) != "+":
+					continue
+				doorways += 1
+				var centre: Vector3 = level_i.cell_centre(x, z) + Vector3(0.0, 1.4, 0.0)
+				var hit := space_i.intersect_ray(PhysicsRayQueryParameters3D.create(
+					centre - Vector3(half_gap, 0.0, 0.0), centre + Vector3(half_gap, 0.0, 0.0), 16))
+				if not hit.is_empty():
+					blocked += 1
+					sealed_arenas.append("%s %s%d" % [LevelBuilder.LEVELS[i]["name"],
+						String.chr(65 + x), z + 1])
+		remove_child(level_i)
+		level_i.free()
+	_check(doorways > 0, "the arenas have doorways to probe (%d)" % doorways)
+	_check(blocked == 0, "no doorway of any arena is blocked (%d: %s)" % [blocked,
+		_list(sealed_arenas)])
+
+## `TextureLibrary` is the "a real file wins" contract for room surfaces, the
+## same shape as ModelLibrary and ArtLibrary: the file name is the whole wiring,
+## a missing file falls back to the code-drawn version, and every surface
+## applies triplanar so a 4 m wall cell and a 56 m floor tile at the same rate.
+func _test_texture_library() -> void:
+	var missing: Array[String] = []
+	for surface in TextureLibrary.SURFACES:
+		if TextureLibrary.surface(surface) == null:
+			missing.append(surface)
+	_check(missing.is_empty(), "every surface resolves (%s)" % _list(missing))
+	_check(TextureLibrary.surface("no_such_surface") != null, "an unknown surface still resolves")
+	for surface in TextureLibrary.SURFACES:
+		var path := TextureLibrary.surface_path(surface)
+		_check(path == "res://assets/textures/%s.png" % surface and path == path.to_lower(),
+			"%s -> %s" % [surface, path.get_file()])
+	var mat := TextureLibrary.material("carpet", Color.WHITE)
+	_check(mat.albedo_texture != null and mat.uv1_triplanar,
+		"surfaces tile triplanar instead of stretching across a BoxMesh")
 
 ## Regression for the "no ceilings were ever built" bug: _add_ceiling() is only
 ## reachable from the '^' branch, so its own glyph guard always matched and it
@@ -1449,10 +2404,44 @@ func _test_stage4_meta() -> void:
 ## Stage 4: the new main scene and autoloads are registered in project.godot.
 func _test_stage4_project() -> void:
 	var main_scene: String = ProjectSettings.get_setting("application/run/main_scene", "")
-	_check(main_scene == "res://scenes/main_menu.tscn", "main scene is main_menu.tscn")
+	# The run opens on the logo splash, which then hands over to the menu.
+	_check(main_scene == "res://scenes/splash_screen.tscn", "main scene is the splash screen")
 	_check(ProjectSettings.has_setting("autoload/Meta"), "Meta autoload registered")
 	_check(ProjectSettings.has_setting("autoload/Settings"), "Settings autoload registered")
 	_check(ProjectSettings.has_setting("autoload/SoundManager"), "SoundManager autoload registered")
+	# Godot's own boot logo would flash before ours; it has to stay off.
+	_check(not bool(ProjectSettings.get_setting("application/boot_splash/show_image", true)),
+		"the engine splash logo is disabled")
+
+## The splash is the first thing the player sees, so it has to actually exist
+## and point at the menu: a broken logo path leaves a black screen with no way
+## out, and a splash that forgets MENU_SCENE leaves the game stuck on it.
+func _test_splash_screen() -> void:
+	var scene: Node = load("res://scenes/splash_screen.tscn").instantiate()
+	add_child(scene)
+	await get_tree().process_frame
+	_check(scene.has_method("_to_menu"), "splash_screen.tscn uses the SplashScreen script")
+	_check(SplashScreen.MENU_SCENE == "res://scenes/main_menu.tscn",
+		"splash hands over to the main menu")
+	# The brand asset is not optional: without it the splash silently falls back
+	# to a spell icon, which is exactly the "no logo" screen we do not ship.
+	_check(ResourceLoader.exists(SplashScreen.LOGO_PATH),
+		"the studio logo ships at %s" % SplashScreen.LOGO_PATH.get_file())
+	var mark := scene.get_node_or_null("Column/Mark") as TextureRect
+	_check(mark != null and mark.texture != null, "the splash draws a logo mark")
+	_check(mark != null and mark.texture == load(SplashScreen.LOGO_PATH),
+		"the mark is the studio logo, not a stand-in")
+	# The fade overlay is what the intro/outro tween animate; without it the
+	# screen would snap between scenes.
+	var fade := scene.get_node_or_null("FadeOverlay") as ColorRect
+	_check(fade != null, "splash has a fade overlay")
+	var held := false
+	for child in scene.get_node_or_null("Column").get_children():
+		if child is Label and String((child as Label).text) == "DESK EXORCIST":
+			held = true
+	_check(held, "splash shows the game title")
+	remove_child(scene)
+	scene.free()
 
 ## Gameplay fix: the HUD must draw an always-on aim reticle so the player knows
 ## where holy bolts and spells go.
@@ -1574,6 +2563,7 @@ func _it_player_can_be_killed() -> void:
 	var scene := await _spawn_run()
 	var game := scene as Game
 	var player := scene.get_node_or_null("Player") as Player
+	var level := scene.get_node_or_null("Level") as LevelBuilder
 	# Ring the caster with tanks and re-seat them each frame: left alone they
 	# shove each other out of melee reach and the test becomes flaky.
 	var demons: Array[Enemy] = []
@@ -1582,14 +2572,41 @@ func _it_player_can_be_killed() -> void:
 		demon.configure(Enemy.Kind.WATER_COOLER)
 		scene.add_child(demon)
 		demons.append(demon)
+	# Only ring slots the caster can actually see into. A slot inside a wall is
+	# useless: melee needs line of sight, so on a maze-like arena (Archive Maze,
+	# Meeting Pods) some of the six ring positions were buried in geometry and
+	# the run could not end -- which is how this check became a coin flip
+	# depending on which arena `Game._ready` happened to roll.
+	var slots: Array[Vector3] = []
+	for j in 6:
+		var offset := Vector3(cos(TAU * float(j) / 6.0), 0.0, sin(TAU * float(j) / 6.0)) * 1.2
+		if level != null and level.is_blocked(player.global_position + offset):
+			continue
+		slots.append(offset)
+	if slots.is_empty():
+		slots.append(Vector3.ZERO)
+	# The caster is wounded before the probe on purpose. Player i-frames mean a
+	# packed ring can land about one hit per cooldown no matter how many demons
+	# are in it, so a full 100 HP caster needs ~15 s to die while the probe only
+	# runs 10 -- it then passed only when the wave director happened to send
+	# extra demons in, which is the coin flip this test used to be. A wounded
+	# caster makes "contact damage can end a run" decisive.
+	if is_instance_valid(player):
+		player.max_health = 25.0
+		player.health = 25.0
 	var killed := false
 	for i in 600:
 		if is_instance_valid(player) and player.is_alive():
 			for j in demons.size():
 				if not is_instance_valid(demons[j]):
 					continue
-				var a := TAU * float(j) / float(demons.size()) + float(i) * 0.02
-				demons[j].global_position = player.global_position + Vector3(cos(a), 0.0, sin(a)) * 1.2
+				var a := float(i) * 0.02
+				var spin := Vector3(cos(a), 0.0, sin(a))
+				# Rotate the slot set rather than the slot itself, so the demons
+				# keep circling without any of them walking into a wall.
+				var base: Vector3 = slots[j % slots.size()]
+				demons[j].global_position = player.global_position \
+					+ Vector3(base.x * spin.x - base.z * spin.z, 0.0, base.x * spin.z + base.z * spin.x)
 		await get_tree().physics_frame
 		if not is_instance_valid(player) or not player.is_alive():
 			killed = true

@@ -292,3 +292,27 @@ static func spell_icon(spell_id: int) -> Texture2D:
 		_:
 			_ring(img, 12, 12, 7, 2, C_METAL_DARK)
 	return _tex(img)
+
+## Procedural stand-in for the main-menu backdrop
+## (assets/ui/backgrounds/menu.png, see LEONARDO_PROMPTS.md). Dark office floor
+## with a violet portal glow, so the menu is readable before any art exists.
+static func menu_background() -> Texture2D:
+	var img := _canvas(64, 36)
+	var floor_c := Color(0.06, 0.06, 0.09)
+	var wall_c := Color(0.10, 0.10, 0.15)
+	for y in img.get_height():
+		# Horizon in the upper third: floor below, wall above.
+		var wall_t := 1.0 - float(y) / float(img.get_height() - 1)
+		var base := floor_c.lerp(wall_c, wall_t)
+		for x in img.get_width():
+			_px(img, x, y, base)
+	# Violet portal glow, low and centred like the reference prompt.
+	var glow := Color(0.42, 0.16, 0.75)
+	for y in img.get_height():
+		for x in img.get_width():
+			var d := Vector2(float(x - 32), float(y - 22) * 1.6).length()
+			var a: float = clampf(1.0 - d / 14.0, 0.0, 1.0)
+			if a > 0.0:
+				var cur := img.get_pixel(x, y)
+				_px(img, x, y, cur.lerp(glow, a * a * 0.85))
+	return _tex(img)

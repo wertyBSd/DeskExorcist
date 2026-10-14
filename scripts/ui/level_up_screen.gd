@@ -14,9 +14,15 @@ var _row: HBoxContainer
 var _player: Player
 var _views: Array = []
 var _cursor_free := false
-## Timestamp until which clicks are ignored (prevents an attack-click that was
-## already held down from hitting a card the instant the overlay appears).
+## Timestamp until which input is ignored (the overlay opens on the same frame
+## the shot that earned the level landed, and the fire button the player is
+## still holding would otherwise pick a card the instant it appears).
 var _click_lock_until_ms := 0
+## Spell keys that were ALREADY down when the overlay opened. They have to be
+## released before they can pick a card: casting while levelling up is normal,
+## and without this the release of the spell key silently chose a reward
+## (BUGS.md #18).
+var _await_release: Dictionary = {}
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -68,9 +74,23 @@ func open() -> void:
 		_row.add_child(view)
 		_views.append(view)
 	visible = true
+	# Anything queued while the tree was paused is stale by the time the player
+	# can see the cards -- drop it, and take back the keyboard focus so no
+	# button is one Space press away from being taken.
+	Input.flush_buffered_events()
+	var vp := get_viewport()
+	if vp != null:
+		vp.gui_release_focus()
 	# Arm the click guard; also swallow the release of the mouse the player was
 	# already holding when the overlay appeared (fire-while-advancing case).
-	_click_lock_until_ms = Time.get_ticks_msec() + 450
+	_click_lock_until_ms = Time.get_ticks_msec() + 250
+	# Remember what was held down. Those keys only become card shortcuts once
+	# they are released and pressed again.
+	_await_release.clear()
+	for slot in InputSetup.SPELL_KEYS.size():
+		var action := InputSetup.spell_action(slot)
+		if Input.is_action_pressed(action):
+			_await_release[action] = true
 
 ## Keyboard fallback (1/2/3): lets the reward be taken without the mouse.
 func _unhandled_input(event: InputEvent) -> void:
@@ -79,16 +99,28 @@ func _unhandled_input(event: InputEvent) -> void:
 	if Time.get_ticks_msec() < _click_lock_until_ms:
 		return
 	for i in _views.size():
-		if event.is_action_pressed(StringName("spell_%d" % (i + 1))):
+		var action := StringName("spell_%d" % (i + 1))
+		if not event.is_action_pressed(action) and not event.is_action_released(action):
+			continue
+		# A key that was already down when the cards appeared only counts after
+		# it has been released and pressed again.
+		if _await_release.has(action):
+			if event.is_action_released(action):
+				_await_release.erase(action)
+			_swallow()
+			return
+		if event.is_action_pressed(action):
 			var view = _views[i]
 			if view != null:
 				view._on_pressed()
-			# Null-safe: the card may have triggered a scene change that detached
-			# this screen, leaving get_viewport() null (see Баг #10).
-			var vp := get_viewport()
-			if vp != null:
-				vp.set_input_as_handled()
+			_swallow()
 			return
+
+## Marks the event handled so it cannot also reach the caster behind the pause.
+func _swallow() -> void:
+	var vp := get_viewport()
+	if vp != null:
+		vp.set_input_as_handled()
 
 func _on_card_chosen(card: UpgradeCard) -> void:
 	if card != null and _player != null:

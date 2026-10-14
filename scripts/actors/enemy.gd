@@ -43,6 +43,32 @@ const BOMBER_RADIUS := 4.0
 ## a caster standing on top of it -- "invisible" damage through the deck.
 const REACH_HEIGHT := 1.3
 
+## Vertical bounds outside which a demon is unrecoverable. The arena floor sits
+## at y=0 and the balcony slabs at DECK_H (2.4), so a demon past these limits has
+## been ejected through geometry -- stair ramps and balcony edges are thin,
+## rotated slabs that `move_and_slide` can squeeze a body into, and the solver
+## answers by flinging it. Measured: a demon whose back was against the balcony
+## while the caster stood on it ended up at y = +330.
+##
+## Past these limits the demon is invisible, unshootable, still counted against
+## the wave budget and still drawn on the minimap: the player sees a red dot on
+## the map with nothing standing behind it.
+const RECOVER_Y_MIN := -6.0
+const RECOVER_Y_MAX := 14.0
+
+## A demon that wants to move but has not budged for this long is embedded in
+## geometry, not merely pinned on a pillar. `_tick_unstuck` only sidesteps for
+## 0.6 s at a time, which never helps when the body is fully inside a wall.
+const STUCK_LIMIT := 4.0
+
+## Seconds a demon may sit inside a solid level cell before it is put back on a
+## legal tile (BUGS.md #16). This is a separate clock from `_tick_unstuck` on
+## purpose: a capsule wedged in a wall reports ZERO velocity, so `wants_move` is
+## false and the stuck timer resets every frame -- the Y-recovery never fires and
+## the demon stays inside the block forever: invisible, unkillable, still counted
+## against the alive cap and still drawn on the minimap.
+const WEDGE_LIMIT := 2.0
+
 var kind: Kind = Kind.PAPERWORK_PHANTOM
 var health := PHANTOM_HEALTH
 var max_health := PHANTOM_HEALTH
@@ -69,6 +95,11 @@ var _sidestep_time := 0.0
 var _sidestep_sign := 1.0
 var _progress_timer := 0.0
 var _progress_position := Vector3.ZERO
+var _stuck_time := 0.0
+## How long this demon has been sitting inside a solid level cell (BUGS.md #16).
+## Deliberately independent of `_stuck_time`: a wedged body does not move, so
+## the moving-stuck clock never reaches its limit for it.
+var _wedged_time := 0.0
 
 func _ready() -> void:
 	add_to_group("enemies")
@@ -242,7 +273,43 @@ func _physics_process(delta: float) -> void:
 	velocity += _knockback
 	_knockback = _knockback.move_toward(Vector3.ZERO, KNOCKBACK_DECAY * delta)
 	move_and_slide()
+	# Checked after the move: ejection happens during the solve.
+	if global_position.y < RECOVER_Y_MIN or global_position.y > RECOVER_Y_MAX:
+		_recover()
+		return
+	# BUGS.md #16: sample the grid directly. A body fully inside a block never
+	# moves, so the stuck timer below never accumulates and never recovers it.
+	if _is_wedged():
+		_wedged_time += delta
+		if _wedged_time >= WEDGE_LIMIT:
+			_recover()
+			return
+	else:
+		_wedged_time = 0.0
 	_tick_unstuck(delta)
+
+## True when this demon's position is inside a solid level cell.
+func _is_wedged() -> bool:
+	_acquire_level()
+	if _level == null or not _level.has_method("is_blocked"):
+		return false
+	return bool(_level.call("is_blocked", global_position))
+
+## Puts a lost demon back on a legal ground tile. This is a teleport, not a
+## death: a demon removed here would silently shrink the wave and leave the
+## player one fewer target than the HUD promised.
+func _recover() -> void:
+	_acquire_level()
+	var at := global_position
+	if _level != null and _level.has_method("random_edge_position"):
+		at = _level.call("random_edge_position")
+	velocity = Vector3.ZERO
+	_stuck_time = 0.0
+	_sidestep_time = 0.0
+	_wedged_time = 0.0
+	_progress_timer = 0.0
+	_progress_position = at
+	global_position = at
 
 func _chase(delta: float) -> void:
 	_acquire_player()
@@ -320,6 +387,7 @@ func _tick_unstuck(delta: float) -> void:
 	var wants_move := _player != null and Vector2(velocity.x, velocity.z).length() > 0.5
 	if not wants_move:
 		_progress_timer = 0.0
+		_stuck_time = 0.0
 		_progress_position = global_position
 		return
 	_progress_timer += delta
@@ -328,6 +396,12 @@ func _tick_unstuck(delta: float) -> void:
 		if moved < 0.3:
 			_sidestep_time = 0.6
 			_sidestep_sign = 1.0 if randf() < 0.5 else -1.0
+			_stuck_time += 0.5
+			if _stuck_time >= STUCK_LIMIT:
+				_recover()
+				return
+		else:
+			_stuck_time = 0.0
 		_progress_timer = 0.0
 		_progress_position = global_position
 
@@ -437,6 +511,15 @@ func hurt_center() -> Vector3:
 
 func apply_knockback(from: Vector3, force: float) -> void:
 	var dir := global_position - from
+	dir.y = 0.0
+	if dir.length() > 0.001:
+		_knockback = dir.normalized() * force
+
+## Pushes the body along an explicit direction, no damage. The caster uses it
+## when he takes a hit: a pack that has him cornered has to be shoved off, or
+## "backing into a wall" is always a death sentence (BUGS.md #20).
+func shove(direction: Vector3, force: float) -> void:
+	var dir := direction
 	dir.y = 0.0
 	if dir.length() > 0.001:
 		_knockback = dir.normalized() * force

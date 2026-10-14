@@ -91,12 +91,12 @@ const LEVELS := [
 			"##################",
 			"#n......====....n#",
 			"#.......^..^.....#",
-			"#..o...o....o...o.#",
+			"#..o...o....o...o#",
 			"#..+..######..+..#",
 			"#....o......o....#",
 			"#..+..######..+..#",
 			"#................#",
-			"#..o...o....o...o.#",
+			"#..o...o....o...o#",
 			"#................#",
 			"#.......S........#",
 			"#................#",
@@ -105,21 +105,26 @@ const LEVELS := [
 	},
 	{
 		"name": "Meeting Pods",
+		# 17 columns: three rooms split by partitions at x=6 and x=10, each room
+		# 5 / 3 / 5 cells wide, with doors on both lines. They used to alternate
+		# between x=5 and x=4 (and x=10 / x=11) row by row, which on the minimap
+		# looked like a staircase of disconnected wall stubs with odd alcoves
+		# instead of two clean walls.
 		"map": [
-			"################",
-			"#n...#....#....n#",
-			"#.o..#....#..o..#",
-			"#...+......+....#",
-			"#...#..==..#....#",
-			"#.o.#..^...#..o.#",
-			"#...#......#....#",
-			"#..+...S....+...#",
-			"#...#......#....#",
-			"#.o.#..^...#..o.#",
-			"#...#..==..#....#",
-			"#...+......+....#",
-			"#.n..#....#..n..#",
-			"################",
+			"#################",
+			"#n....#...#....n#",
+			"#..o..#...#..o..#",
+			"#.....#...#.....#",
+			"#.....+...+.....#",
+			"#.....#.=.#.....#",
+			"#..o..#.^.#..o..#",
+			"#..S..#...#.....#",
+			"#.....+...+.....#",
+			"#.....#.=.#.....#",
+			"#..o..#.^.#..o..#",
+			"#.....#...#.....#",
+			"#n....#...#....n#",
+			"#################",
 		],
 	},
 	{
@@ -129,12 +134,12 @@ const LEVELS := [
 			"#n....#....#",
 			"#.o...#..n.#",
 			"#..o..#..o.#",
-			"#..+.....+#",
+			"#..+.....+.#",
 			"#..o..#..o.#",
 			"#.n...#..n.#",
-			"#..+..=..+#",
+			"#..+..=..+.#",
 			"#..o..^..o.#",
-			"#..+.....+#",
+			"#..+.....+.#",
 			"#n....S....#",
 			"############",
 		],
@@ -190,6 +195,13 @@ var props_count := 0
 var ceiling_count := 0
 ## Corner columns built under those ceilings (COLUMN_COUNT per ceiling).
 var ceiling_column_count := 0
+## Room dressing counters (see RoomDressing): how much office furniture the
+## skin over the geometry actually put in the room.
+var window_count := 0
+var door_count := 0
+var sign_count := 0
+var lamp_count := 0
+var trimmed_faces := 0
 
 var _map: Array = []
 var _wall_mat: StandardMaterial3D = null
@@ -219,6 +231,11 @@ func build(level_index: int = 0) -> void:
 	ceiling_count = 0
 	ceiling_column_count = 0
 	floor_gimmick_count = 0
+	window_count = 0
+	door_count = 0
+	sign_count = 0
+	lamp_count = 0
+	trimmed_faces = 0
 	npc_points.clear()
 	free_cells.clear()
 	spawn_cells.clear()
@@ -272,6 +289,23 @@ func build(level_index: int = 0) -> void:
 	# minimap (and only AoE can touch).  Keep reachable drops only.
 	var reachable := _reachable_from_player()
 	spawn_cells = spawn_cells.filter(func(c: Vector2i) -> bool: return reachable.has(c))
+
+	# Everything so far is the arena's skeleton: solid blocks that collide and
+	# nothing you would call a room. The dressing pass skins them -- panelled
+	# walls, windows onto space, doors that stay shut, a dropped ceiling. It is
+	# built last so it sees the finished map (props included) and adds no
+	# collision of its own, so gameplay cannot shift under it.
+	_dress_rooms()
+
+## Runs RoomDressing over the finished map and publishes its counters.
+func _dress_rooms() -> void:
+	var dressing := RoomDressing.new()
+	dressing.build(self)
+	window_count = dressing.window_count
+	door_count = dressing.door_count
+	sign_count = dressing.sign_count
+	lamp_count = dressing.lamp_count
+	trimmed_faces = dressing.trimmed_faces
 
 ## Every cell reachable on foot from the player's start tile, walking only over
 ## ground-walkable tiles (see `_cell_passable`): walls '#' and pillars 'o'
@@ -352,15 +386,22 @@ func next_path_point(from_world: Vector3, to_world: Vector3) -> Vector3:
 	var step: Vector2i = path[1]
 	return cell_centre(step.x, step.y)
 
-## True when the arena tile can be walked on at *ground* level.  Only solid
-## walls '#' and cover pillars 'o' block: a doorway '+' carries a 1.8 m gap a
-## demon walks through, and a balcony '=' slab floats at DECK_H leaving a ~2 m
-## crawlspace beneath it.  (Баг #12 originally treated '=' as impassable, which
-## severed corridors that only ran under a balcony or through a door -- see
-## Баг #13, where reachability is now guaranteed instead.)
+## True when the arena tile can be walked on at *ground* level.  Only a solid
+## wall '#' blocks: a doorway '+' carries a 1.8 m gap a demon walks through, and
+## a balcony '=' slab floats at DECK_H leaving a ~2 m crawlspace beneath it.
+##
+## A cover pillar 'o' does NOT block. It is a 1.4 m box in a 4 m cell, so 1.3 m
+## of clearance remains on each side -- wider than the 0.8 m caster and demon
+## capsules. Calling it a wall made this grid lie: on "Server Hall" it sealed
+## off the whole central chamber plus two edge tiles, cut the demon spawn pool
+## from ~100 cells down to 11, and sent demons pathing the long way round
+## pillars they could have walked straight past. Pillars are still avoided in
+## practice -- `next_path_point` keeps its straight-line raycast against layer
+## 16, which does hit them. (Баг #12 originally treated '=' as impassable; see
+## Баг #13 for the reachability guarantee that replaced it.)
 func _cell_passable(x: int, z: int) -> bool:
 	var g := glyph_at(x, z)
-	return g != "" and g != "#" and g != "o"
+	return g != "" and g != "#"
 
 ## Short raycast to check a straight world-space path is not blocked by geometry.
 func _line_clear_world(from_world: Vector3, to_world: Vector3) -> bool:
@@ -570,46 +611,42 @@ func _connects_to_deck(x: int, z: int) -> bool:
 
 func _wall_material() -> StandardMaterial3D:
 	if _wall_mat == null:
-		_wall_mat = StandardMaterial3D.new()
-		_wall_mat.albedo_color = Color("#3a3d4d")
-		_wall_mat.roughness = 0.9
+		# Wallpaper, tiled triplanar at a fixed world rate: the blocks are
+		# BoxMesh/ArrayMesh primitives whose UVs run 0..1 per face, so without
+		# that a pattern would be stretched across a whole 4 m wall cell.
+		_wall_mat = TextureLibrary.material("wallpaper", Color.WHITE, 0.94, 0.5)
 	return _wall_mat
 
 func _floor_material() -> StandardMaterial3D:
 	if _floor_mat == null:
-		_floor_mat = StandardMaterial3D.new()
-		_floor_mat.albedo_color = Color("#23222c")
-		_floor_mat.roughness = 1.0
+		_floor_mat = TextureLibrary.material("carpet", Color.WHITE, 1.0, 0.5)
 	return _floor_mat
 
 ## Balcony slabs are a touch lighter than the floor so the second tier reads
 ## clearly from underneath.
 func _deck_material() -> StandardMaterial3D:
 	if _deck_mat == null:
-		_deck_mat = StandardMaterial3D.new()
-		_deck_mat.albedo_color = Color("#4a4f63")
-		_deck_mat.roughness = 0.85
+		_deck_mat = TextureLibrary.material("wood", Color("#8f96ad"), 0.8, 0.5)
 	return _deck_mat
 
 func _stair_material() -> StandardMaterial3D:
 	if _stair_mat == null:
-		_stair_mat = StandardMaterial3D.new()
-		_stair_mat.albedo_color = Color("#5c6275")
-		_stair_mat.roughness = 0.8
+		_stair_mat = TextureLibrary.material("wood", Color("#9aa2b8"), 0.75, 0.5)
 	return _stair_mat
 
 func _ceiling_material() -> StandardMaterial3D:
 	if _ceiling_mat == null:
-		_ceiling_mat = StandardMaterial3D.new()
-		_ceiling_mat.albedo_color = Color("#2a2c38")
-		_ceiling_mat.roughness = 0.95
+		# Stairwell enclosures sit right in the middle of the room, so they are
+		# tinted well down: at full tile brightness they read as glowing white
+		# boxes floating over the arena instead of a headroom over the stairs.
+		_ceiling_mat = TextureLibrary.material("ceiling", Color("#6d7280"), 0.95, 0.4)
 	return _ceiling_mat
 
 func _prop_material() -> StandardMaterial3D:
 	if _prop_mat == null:
-		_prop_mat = StandardMaterial3D.new()
-		_prop_mat.albedo_color = Color("#6b6350")
-		_prop_mat.roughness = 0.9
+		# Desk tops and cubicle panels share the trim wood, so the furniture
+		# belongs to the same room as the walls it stands against.
+		_prop_mat = TextureLibrary.material("wood", Color("#9a917e"), 0.85, 0.8)
 	return _prop_mat
 
 ## A stairwell volume over a '^' cell: a solid slab whose underside sits
@@ -716,6 +753,13 @@ func _scatter_floor_gimmicks(level_index: int) -> void:
 			2:
 				_spawn_cover_block(centre, Vector3(2.2, 1.5, 0.4), "LowWall")  # укрытие
 				placed += 1
+			_:
+				# Floors 4+ carry no floor gimmick. `placed` never advances for
+				# them, so without this the loop ran to the end of free_cells and
+				# reserved EVERY tile as occupied -- which is what cut the demon
+				# spawn pool on the large maps from ~150 cells down to single
+				# digits and left whole wings of the arena with no demons in them.
+				continue
 		gimmick_cells.append(c)
 		floor_gimmick_count += 1
 
@@ -737,7 +781,9 @@ func _spawn_cover_block(base: Vector3, size: Vector3, block_name: String) -> voi
 	bm.size = size
 	mesh.mesh = bm
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color("#5a6070")
+	# Cover blocks stand in the middle of a dark room; at the old mid grey they
+	# became the brightest thing on screen and pulled the eye off the demons.
+	mat.albedo_color = Color("#3f4557")
 	mesh.material_override = mat
 	body.add_child(mesh)
 	add_child(body)
@@ -829,23 +875,55 @@ func _is_against_structure(x: int, z: int) -> bool:
 ## One piece of office furniture.  A small set of recognizable low-poly silhouettes
 ## (desk, filing cabinet, cubicle panel, potted plant) instead of a random box, so
 ## the clutter reads as an office rather than noise.
+##
+## Furniture is SOLID (bug report: "chairs and desks are not physical, you walk
+## through them and cannot jump on them"). Each piece gets one box collider on
+## the level's collision layer, sized to the whole silhouette rather than to the
+## individual visual boxes -- one collider is cheaper than four and stops the
+## caster clipping the legs. Desks at 0.76 m and cubicles at 1.2 m are low
+## enough to jump onto, which turns a cornered caster into someone who can vault
+## the furniture instead of just standing there.
 func _spawn_prop(base: Vector3) -> void:
 	var kind := randi() % 4
 	var root := Node3D.new()
 	root.name = "Prop"
+	# Godot renames a node whose name already exists among its siblings, so of
+	# the ~15 props only the first keeps the name "Prop" and the rest turn into
+	# "@Node3D@123". Anything that has to FIND the furniture -- the tests, and
+	# whatever gets added later that wants to break a desk -- goes by group.
+	root.add_to_group("props")
 	root.position = base
 	root.rotation.y = [0.0, PI * 0.5, PI, PI * 1.5][randi() % 4]
 	add_child(root)
 	match kind:
 		0:
 			_build_desk(root)
+			_prop_solid(root, Vector3(0.0, 0.38, 0.0), Vector3(1.5, 0.76, 0.8))
 		1:
 			_build_cabinet(root)
+			_prop_solid(root, Vector3(0.0, 0.55, 0.0), Vector3(0.6, 1.1, 0.5))
 		2:
 			_build_cubicle(root)
+			_prop_solid(root, Vector3(0.0, 0.6, -0.2), Vector3(1.7, 1.2, 0.6))
 		_:
 			_build_plant(root)
+			_prop_solid(root, Vector3(0.0, 0.5, 0.0), Vector3(0.5, 1.0, 0.5))
 	props_count += 1
+
+## Box collider on the level's collision layer, so the caster, the demons and
+## the bolts all treat furniture like any other solid.
+func _prop_solid(root: Node3D, pos: Vector3, size: Vector3) -> void:
+	var body := StaticBody3D.new()
+	body.name = "Solid"
+	body.collision_layer = 16
+	body.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	shape.shape = box
+	body.add_child(shape)
+	body.position = pos
+	root.add_child(body)
 
 ## A desk: a top slab on four slim legs.
 func _build_desk(root: Node3D) -> void:
@@ -880,11 +958,12 @@ func _add_prop_box(root: Node3D, pos: Vector3, size: Vector3, material: Standard
 	mesh.material_override = material
 	root.add_child(mesh)
 
-## Props are visual-only: no collision, so they never trap the player or AI.
+## Furniture carries its collider from `_prop_solid`; this comment only covered
+## the materials.
 func _metal_material() -> StandardMaterial3D:
 	if _metal_mat == null:
 		_metal_mat = StandardMaterial3D.new()
-		_metal_mat.albedo_color = Color("#8a8f9e")
+		_metal_mat.albedo_color = Color("#5d6373")
 		_metal_mat.roughness = 0.6
 	return _metal_mat
 

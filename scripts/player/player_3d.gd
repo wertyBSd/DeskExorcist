@@ -11,6 +11,8 @@ signal charge_changed(ratio: float)
 
 @onready var _camera: Camera3D = get_node_or_null("Camera3D") as Camera3D
 @onready var _auto_weapon: Node = get_node_or_null("AutoWeapon")
+## First-person casting hands, parented to the camera (Viewmodel.attach).
+var _viewmodel: Viewmodel = null
 
 # --- Stats (scaled by level-up cards via UpgradePool) -----------------------
 var max_health: float = float(GameConfig.PLAYER_MAX_HEALTH)
@@ -38,6 +40,9 @@ var spells: Array[BaseSpell] = []
 
 # --- Hold & Release state ---------------------------------------------------
 var _charging_slot: int = -1
+## Fraction of walk speed available while a spell is charging. Charging is no
+## longer a standstill, but it is still a commitment (BUGS.md #20).
+const CHARGE_MOVE_SCALE := 0.45
 var _charge_timer: float = 0.0
 var _stunned: bool = false
 var _stun_time: float = 0.0
@@ -75,6 +80,10 @@ func _ready() -> void:
 		ModelLibrary.attach(model_root, ModelLibrary.EXORCIST, 1.7)
 		_anim = PlayerAnimation.attach(self, model_root)
 		_hide_own_model_from_camera(model_root)
+	_viewmodel = Viewmodel.attach(_camera)
+	# The body's own shadow falls behind the caster, where the first-person
+	# camera can never see it -- this is the patch the caster does see.
+	ContactShadow.attach(self)
 	# Pre-run terminal perk (Meta overlay, seen in the main menu).
 	var meta := get_node_or_null("/root/Meta")
 	if meta != null:
@@ -141,6 +150,10 @@ func _start_charging(slot: int) -> void:
 		return
 	_charging_slot = slot
 	_charge_timer = 0.0
+	# The orb in the cupped palms takes the spell's colour, so the charge is
+	# identifiable from inside the arena view without reading the HUD.
+	if _viewmodel != null:
+		_viewmodel.set_spell_colour(spell.colour)
 	_show_preview(spell)
 	EffectUtil.sound(get_tree(), &"player_charge_start", global_position)
 
@@ -148,6 +161,8 @@ func _release_charging() -> void:
 	var slot := _charging_slot
 	var spell := _spell_for_slot(slot)
 	_charging_slot = -1
+	if _viewmodel != null:
+		_viewmodel.set_charge(0.0)
 	_clear_preview()
 	charge_changed.emit(0.0)
 	if spell == null:
@@ -167,16 +182,25 @@ func _release_charging() -> void:
 	if _anim != null and _anim.has_animation(PlayerAnimation.CAST_RELEASE):
 		_anim_state = PlayerAnimation.CAST_RELEASE
 		_anim.play(PlayerAnimation.CAST_RELEASE)
+	if _viewmodel != null:
+		_viewmodel.play_release()
 
 func _tick_charge(delta: float) -> void:
 	if _charging_slot == -1:
+		if _viewmodel != null:
+			_viewmodel.set_charge(0.0)
 		return
 	var spell := _spell_for_slot(_charging_slot)
 	if spell == null:
 		_charging_slot = -1
 		return
 	_charge_timer = minf(_charge_timer + delta, spell.charge_time)
-	charge_changed.emit(_charge_timer / spell.charge_time)
+	var ratio := _charge_timer / spell.charge_time
+	charge_changed.emit(ratio)
+	# The hands read the charge too: they close on the orb as it fills, which is
+	# the only charge feedback that stays inside the arena view.
+	if _viewmodel != null:
+		_viewmodel.set_charge(ratio)
 	# Keep a directional preview pointed where the player is looking.
 	if _preview != null and _preview.visible:
 		_preview.update_aim(_aim_dir())
@@ -186,8 +210,24 @@ func _aim_point() -> Vector3:
 	return _camera.global_position - _camera.global_transform.basis.z * 100.0
 
 ## Horizontal aim direction (from the camera), used to orient spell previews.
+## Null-safe: the HUD asks every frame, including while a scene is being torn
+## down and the camera has already gone.
 func _aim_dir() -> Vector3:
+	if _camera == null:
+		return Vector3.FORWARD
 	return -_camera.global_transform.basis.z
+
+## Where the caster is LOOKING, flattened to the XZ plane and normalised.
+## The minimap is a top-down view, so it has no use for the pitch -- and the
+## camera pitches all the time (looking up at demons, down from a balcony).
+func look_direction() -> Vector3:
+	var dir := _aim_dir()
+	dir.y = 0.0
+	return dir.normalized() if dir.length() > 0.001 else Vector3.FORWARD
+
+## True while a spell is being charged (public for HUD, cards and tests).
+func is_charging() -> bool:
+	return _charging_slot != -1
 
 ## Shows the target-zone hint for the spell now charging.
 func _show_preview(spell: BaseSpell) -> void:
@@ -251,8 +291,16 @@ func _spell_for_slot(slot: int) -> BaseSpell:
 	return spells[slot]
 
 func _fire_auto_weapon() -> void:
+	if _viewmodel != null:
+		_viewmodel.play_fire()
 	if _auto_weapon.has_method("fire"):
-		_auto_weapon.call("fire", _aim_point())
+		# From the charge in the caster's palms, not from their own head: the
+		# bolt is the orb leaving the hands, and a shot that appears at the
+		# screen's own origin has nothing to do with anything on screen.
+		var muzzle := global_position + Vector3.UP * 1.5
+		if _viewmodel != null:
+			muzzle = _viewmodel.muzzle_position()
+		_auto_weapon.call("fire", _aim_point(), muzzle)
 
 ## Camera look.  Sensitivity comes from the Settings autoload (ROADMAP Stage 4)
 ## and falls back to the GameConfig constant when Settings is absent (tests).
@@ -270,12 +318,54 @@ func _set_mouse_captured(captured: bool) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if captured else Input.MOUSE_MODE_VISIBLE
 
 func _handle_spell_input(event: InputEvent) -> void:
+	# Deliberate abort of a charge in progress. Before, the ONLY way out of one
+	# was to take a hit, so a mis-cast had to be paid for in health (BUGS.md
+	# #21). Right mouse button, bound as "cancel_cast" in InputSetup.
+	if event.is_action_pressed(&"cancel_cast"):
+		_cancel_charging()
+		return
 	for slot in InputSetup.SPELL_KEYS.size():
 		var action := InputSetup.spell_action(slot)
 		if event.is_action_pressed(action):
 			_start_charging(slot)
 		elif event.is_action_released(action) and _charging_slot == slot:
 			_release_charging()
+			_pick_up_held_spell()
+
+## After a spell fires, pick up another spell key that is still down.
+##
+## `_start_charging` refuses while a slot is busy, so pressing "2" before letting
+## go of "1" dropped that press on the floor -- and `is_action_pressed` ignores
+## key repeat, so holding "2" never re-fired it. Casting two spells back to back
+## silently did nothing until the player let go and pressed again (BUGS.md #17).
+func _pick_up_held_spell() -> void:
+	if _charging_slot != -1:
+		return
+	for slot in InputSetup.SPELL_KEYS.size():
+		if Input.is_action_pressed(InputSetup.spell_action(slot)):
+			_start_charging(slot)
+			return
+
+## Drops an in-flight charge without casting and without a cooldown.
+func _cancel_charging() -> void:
+	if _charging_slot == -1:
+		return
+	_charging_slot = -1
+	_charge_timer = 0.0
+	if _viewmodel != null:
+		_viewmodel.set_charge(0.0)
+	_clear_preview()
+	charge_changed.emit(0.0)
+
+## Input stops while the tree is paused, so a charge interrupted by the reward
+## screen (or Esc) never sees its key-up: `_charging_slot` stays set, and while
+## charging the caster moves at `CHARGE_MOVE_SCALE` and no other spell can start,
+## so a stuck key leaves him crawling at a third of his speed until he presses and
+## releases it again. That was the "hang after casting" (BUGS.md #17), so any
+## pause ends the charge it interrupted.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_UNPAUSED:
+		_cancel_charging()
 
 # --- Physics ----------------------------------------------------------------
 
@@ -308,14 +398,17 @@ func _tick_footsteps(delta: float) -> void:
 ## Picks the clip that matches the current state (BlenderInstruction section 4):
 ## cast_hold while a spell is charged, run while moving, idle otherwise.
 func _update_animation() -> void:
-	if _anim == null:
-		return
 	var want := PlayerAnimation.IDLE
 	if _charging_slot != -1:
 		want = PlayerAnimation.CAST_HOLD
 	elif Vector2(velocity.x, velocity.z).length() > 0.1:
 		want = PlayerAnimation.RUN
 	_play(want)
+	# The hands track the same four states, in their own vocabulary. Updated
+	# even when the body has no AnimationPlayer, so the viewmodel never depends
+	# on the world-model asset being present.
+	if _viewmodel != null:
+		_viewmodel.set_state(want)
 
 ## Switches clips only when the desired one changes, so looping clips are not
 ## restarted every physics frame.
@@ -343,19 +436,25 @@ func _apply_gravity(delta: float) -> void:
 		velocity.y -= gravity * delta
 
 func _apply_movement() -> void:
-	# Holding a charge (or being stunned) roots the caster in place.
-	if _is_rooted():
+	# A stun still roots the caster. Charging no longer does: it used to zero the
+	# velocity outright, which turned every spell into a standstill with demons
+	# closing in -- "I cannot stop and read a spell" and "backing into a corner
+	# gets me eaten" were the same bug seen from two sides (BUGS.md #20).
+	if _stunned:
 		velocity.x = 0.0
 		velocity.z = 0.0
 		return
 	var input := Input.get_vector(&"move_left", &"move_right", &"move_up", &"move_down")
 	var dir := (transform.basis * Vector3(input.x, 0.0, input.y)).normalized()
 	var speed := move_speed * (1.0 - maxf(_slow_ratio, _paper_slow_ratio()))
+	if _charging_slot != -1:
+		speed *= CHARGE_MOVE_SCALE
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 
+## True when the caster cannot move at all (only a stun does that now).
 func _is_rooted() -> bool:
-	return _charging_slot != -1 or _stunned
+	return _stunned
 
 func _tick_timers(delta: float) -> void:
 	for id in _cooldowns.keys():
@@ -422,12 +521,16 @@ func _paper_slow_ratio() -> float:
 ## Applies incoming damage, absorbed entirely while the mirror shield is up.
 ## A short invulnerability window after each hit keeps a pack of demons from
 ## stacking several contacts into one instant.
-func take_damage(amount: float, _source: Vector3 = Vector3.INF) -> void:
+func take_damage(amount: float, source: Vector3 = Vector3.INF) -> void:
 	if _shield_time > 0.0 or health <= 0.0 or _invuln_time > 0.0:
 		return
 	_invuln_time = GameConfig.PLAYER_HIT_INVULN
 	health = maxf(0.0, health - amount)
 	_interrupt_charge()
+	# Shove the pack off the caster. Being caught against a wall used to be a
+	# death sentence: six demons inside a 1.8 m reach, one hit every cooldown,
+	# and no room to back out of (BUGS.md #20). The hit now buys space.
+	_shove_demons(source)
 	EffectUtil.sound(get_tree(), &"player_hurt", global_position)
 	health_changed.emit(health, max_health)
 	# Screen shake on every hit (ROADMAP Stage 3 VFX).
@@ -439,6 +542,28 @@ func take_damage(amount: float, _source: Vector3 = Vector3.INF) -> void:
 	if health <= 0.0:
 		EffectUtil.sound(get_tree(), &"player_death", global_position)
 		died.emit()
+
+## Pushes every demon in melee range away, hardest for the one that hit. Gives
+## the caster one beat to break contact instead of being held in place by the
+## bodies he is trying to walk out of.
+##
+## The boss is deliberately not on this list: it is a separate class (`Boss` is
+## not an `Enemy`) and shoving it would walk its slam telegraph out from under
+## itself. The demons escorting it still get pushed.
+func _shove_demons(source: Vector3) -> void:
+	for node in get_tree().get_nodes_in_group("enemies"):
+		if not (node is Enemy) or not is_instance_valid(node):
+			continue
+		var enemy := node as Enemy
+		var away := enemy.global_position - global_position
+		away.y = 0.0
+		var dist := away.length()
+		if dist > GameConfig.ENEMY_ATTACK_RANGE + 1.2:
+			continue
+		var strength := GameConfig.PLAYER_HIT_SHOVE
+		if source != Vector3.INF and enemy.global_position.distance_to(source) < 0.6:
+			strength *= 1.4
+		enemy.shove(away.normalized() if dist > 0.01 else Vector3.BACK, strength)
 
 ## Restores HP, clamped to the current maximum (Pride's lifesteal).
 func heal(amount: float) -> void:

@@ -5,6 +5,10 @@ class_name HUD
 extends CanvasLayer
 
 const ICON := 40
+## Screen box the minimap is fitted into, in pixels, and its margin from the
+## window edge. The arena scales to whichever of the two axes runs out first.
+const MINIMAP_PX := Vector2(224, 160)
+const MINIMAP_MARGIN := 16.0
 
 var _root: Control
 var _timer_label: Label
@@ -114,9 +118,9 @@ func _build() -> void:
 	_root.add_child(_hitmarker)
 
 	# Minimap (E8): arena layout + player/enemy/portal markers, top-right.
+	# Position and scale are derived from the arena size and the window on every
+	# frame in _update_minimap(), so nothing is hardcoded here.
 	_minimap = Minimap.new()
-	_minimap.position = Vector2(1060, 16)
-	_minimap.scale = Vector2(0.35, 0.35)
 	_minimap.visible = false
 	_root.add_child(_minimap)
 
@@ -160,9 +164,18 @@ func _make_slot(slot: int) -> Control:
 	var holder := Control.new()
 	holder.custom_minimum_size = Vector2(ICON, ICON)
 	var icon := TextureRect.new()
-	icon.texture = PlaceholderArt.spell_icon(InputSetup.spell_id_for_slot(slot))
-	icon.custom_minimum_size = Vector2(ICON, ICON)
+	icon.texture = ArtLibrary.spell_icon(InputSetup.spell_id_for_slot(slot))
+	# A TextureRect's minimum size is its texture size unless expand_mode says
+	# otherwise, so a 256px icon would blow the 40px slot wide open and spill
+	# across the screen. IGNORE_SIZE hands the sizing back to the holder.
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# The project draws 2D at nearest so the procedural art stays crisp, but a
+	# 256px icon dropped into a 40px slot is a 6x minification: nearest turns
+	# it into crawling speckle. Mipmaps + linear filtering are per-node, so the
+	# rest of the HUD keeps the project's setting.
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
 	holder.add_child(icon)
 	var overlay := ColorRect.new()
 	overlay.color = Color(0, 0, 0, 0.6)
@@ -262,33 +275,53 @@ func _update_minimap() -> void:
 	var level := host.get_node_or_null("Level") as LevelBuilder
 	if level == null:
 		return
+	# The map is drawn in cells and scaled to fill a fixed screen box, so every
+	# arena (14x10, 18x13, 16x15) comes out the same size and the markers stay
+	 # readable instead of collapsing to a pixel. Recomputed per frame, which is
+	# also what keeps the map pinned to the corner when the window is resized.
+	var cols := float(level.cells_x)
+	var rows := float(level.cells_z)
+	var vp := get_viewport()
+	var screen := vp.get_visible_rect().size if vp != null else Vector2(1280, 720)
+	var scale := minf(minf(MINIMAP_PX.x / cols, MINIMAP_PX.y / rows), 64.0)
+	_minimap.scale = Vector2(scale, scale)
+	_minimap.position = Vector2(
+		maxf(0.0, screen.x - cols * scale) - MINIMAP_MARGIN,
+		MINIMAP_MARGIN)
 	_minimap.visible = true
 	_minimap.clear()
-	var block := 8.0
+	_minimap.set_extent(Vector2(cols, rows))
 	# Arena floor + walls.
 	for z in level.cells_z:
 		for x in level.cells_x:
 			var g: String = level.glyph_at(x, z)
-			var pos := Vector2(x * block, z * block)
+			var pos := Vector2(x, z)
+			var tile := Rect2(pos, Vector2.ONE)
 			if g == "#" or g == "+" or g == "o":
-				_minimap.add_rect(Rect2(pos, Vector2(block, block)), Color(0.3, 0.32, 0.38))
+				_minimap.add_rect(tile, Color(0.36, 0.38, 0.45))
 			elif g == "=":
-				_minimap.add_rect(Rect2(pos, Vector2(block, block)), Color(0.25, 0.27, 0.33))
+				_minimap.add_rect(tile, Color(0.30, 0.32, 0.40))
 			else:
-				_minimap.add_rect(Rect2(pos, Vector2(block, block)), Color(0.12, 0.13, 0.16))
+				_minimap.add_rect(tile, Color(0.14, 0.15, 0.19))
 	# Portal marker (purple).
 	for node in host.get_children():
 		if node is SpawnerPortal:
 			var pp := level.world_to_cell(node.global_position)
-			_minimap.add_circle(Vector2(pp.x * block + block * 0.5, pp.y * block + block * 0.5), 4.0, Color(0.7, 0.3, 1.0))
+			_minimap.add_circle(Vector2(pp) + Vector2(0.5, 0.5), 0.42, Color(0.75, 0.35, 1.0))
 	# Enemy markers (red).
 	for e in get_tree().get_nodes_in_group("enemies"):
 		if e is Node3D and is_instance_valid(e):
 			var ep := level.world_to_cell(e.global_position)
-			_minimap.add_circle(Vector2(ep.x * block + block * 0.5, ep.y * block + block * 0.5), 3.0, Color(0.9, 0.2, 0.2))
-	# Player marker (white).
+			_minimap.add_circle(Vector2(ep) + Vector2(0.5, 0.5), 0.32, Color(0.95, 0.22, 0.2))
+	# Player marker (white) plus the view cone, so the map says where the
+	# caster is looking and not only where they are -- on a 56x40 arena the
+	# difference between "the demon is north" and "the demon is north-west of
+	# where I am looking" is the whole read.
 	var pl := level.world_to_cell(_player.global_position)
-	_minimap.add_circle(Vector2(pl.x * block + block * 0.5, pl.y * block + block * 0.5), 4.0, Color(1, 1, 1))
+	var here := Vector2(pl) + Vector2(0.5, 0.5)
+	var look := _player.look_direction()
+	_minimap.set_facing(here, Vector2(look.x, look.z))
+	_minimap.add_circle(here, 0.38, Color(1, 1, 1))
 
 ## Runs down the hit marker and screen shake timers (ROADMAP Stage 3 VFX).
 func _tick_vfx(delta: float) -> void:

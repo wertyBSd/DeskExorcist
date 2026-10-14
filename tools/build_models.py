@@ -7,9 +7,16 @@
 
 import bpy
 import math
+import mathutils
 import os
 
 OUT_DIR = r"c:\research\games\Shooter\assets\models"
+
+
+def V3(x, y, z):
+    """mathutils.Vector takes one sequence, but joint lists read far better as
+    three numbers; this is the shorthand the pose code below is written in."""
+    return mathutils.Vector((x, y, z))
 
 
 def enable_gltf():
@@ -69,9 +76,11 @@ def cyl(name, loc, radius, depth, material, verts=8, rot=(0.0, 0.0, 0.0)):
     return o
 
 
-def ring(name, loc, major, minor, material):
+def ring(name, loc, major, minor, material, major_segments=8, minor_segments=4,
+         rot=(0.0, 0.0, 0.0)):
     bpy.ops.mesh.primitive_torus_add(location=loc, major_radius=major, minor_radius=minor,
-                                     major_segments=8, minor_segments=4)
+                                     major_segments=major_segments,
+                                     minor_segments=minor_segments, rotation=rot)
     o = bpy.context.active_object
     o.name = name
     o.data.materials.append(material)
@@ -98,6 +107,19 @@ def export(filepath):
 
 
 # --- models ------------------------------------------------------------------
+
+def limb(name, start, end, width, material):
+    """Box stretched between two points and aimed along them, so forearms and
+    fingers can be placed by their joints instead of by hand-tuned Euler angles.
+    The cube is built at size 1 and scaled, so the length follows the segment."""
+    a = mathutils.Vector(start)
+    b = mathutils.Vector(end)
+    length = (b - a).length
+    o = box(name, (a + b) * 0.5, (width, length, width), material)
+    o.rotation_mode = 'QUATERNION'
+    o.rotation_quaternion = (b - a).to_track_quat('Y', 'Z')
+    return o
+
 
 def build_hero():
     clear_scene()
@@ -416,6 +438,200 @@ def build_boss_director():
     export(os.path.join(OUT_DIR, "boss_director.glb"))
 
 
+def build_viewmodel():
+    """First-person viewmodel: two hands held up in the casting gesture, right
+    palm up carrying the charge, left steadying it from below.
+
+    Deliberately NOT full arms from the shoulder. A viewmodel is cropped at the
+    forearm: the far end is pushed behind the eye and clipped by the near plane,
+    so what reaches the screen is a hand plus a stub of sleeve. Authored full
+    (shoulder -> fingertips) the forearms pass within 4 cm of the lens and read
+    as two black pillars.
+
+    The pose is held LOW -- cut ends below the eye line -- so the forearms enter
+    frame from the bottom corners. Level with the eyes they come in from the top
+    corners instead and the result reads as arms thrust out front.
+
+    The cut end sits at y = +0.30 (Blender -Y is the caster's forward, so +Y is
+    behind); after the orientation flip at the bottom of this function that
+    becomes Godot +Z, which is where viewmodel.gd wants it.
+    """
+    clear_scene()
+    # The hands are GLOVES, and everything about the palette exists to make that
+    # unmistakable at 40 px: dark leather against a dark suit would be mush, so
+    # the glove is a warm brown-black, the knuckles and fingertips are scuffed
+    # lighter, and there is a tan strap with a steel buckle at the wrist. A bare
+    # low-poly hand is a beige blob -- nobody reads it as a hand at this size.
+    leather = mat("leather", (0.20, 0.15, 0.13))
+    worn = mat("leather_worn", (0.34, 0.27, 0.22))
+    strap = mat("strap", (0.52, 0.36, 0.19))
+    steel = mat("buckle", (0.62, 0.63, 0.66))
+    # Dark office suit, not a white shirt: a near-white sleeve at 0.4 m from the
+    # lens reads as a glare bar across the lower screen, not as an arm.
+    suit = mat("sleeve", (0.17, 0.17, 0.23))
+    shirt = mat("cuff", (0.74, 0.73, 0.68))
+    stole = mat("stole", (0.56, 0.18, 0.43))
+
+    # Three phalanges per finger, each shorter, thinner and more curled than the
+    # last. This is what stops a finger reading as a dowel.
+    PHALANX_LEN = (0.030, 0.026, 0.021)
+    PHALANX_W = (0.025, 0.023, 0.020)
+    PHALANX_CURL = (0.0, 0.34, 0.72)
+
+    def finger(name, root, direction, face, length_scale):
+        at = root
+        d = direction.normalized()
+        for k in range(3):
+            nd = (d + face * PHALANX_CURL[k]).normalized()
+            end = at + nd * PHALANX_LEN[k] * length_scale
+            limb("%s%d" % (name, k), at, end, PHALANX_W[k], leather)
+            at = end
+            d = nd
+        return at
+
+    def hand(tag, cut, wrist, palm, tip, inward):
+        """One gloved hand. `inward` tilts the palm off pure side-on so the two
+        palms cup the charge instead of facing it edge-first."""
+        sign = 1.0 if tag == "R" else -1.0
+        arm = (wrist - cut).normalized()
+
+        limb("Forearm" + tag, cut, wrist, 0.088, suit)
+        # Shirt cuff: the one bright band, then the glove on top of it. Two
+        # stacked bands of different colour is the "this is a glove over a
+        # sleeve" read, and it is the single strongest cue at small size.
+        limb("Shirt" + tag, wrist + arm * 0.012, wrist + arm * 0.042, 0.101, shirt)
+        limb("GloveCuff" + tag, wrist + arm * 0.040, wrist + arm * 0.082,
+             0.113, worn)
+        limb("Strap" + tag, wrist + arm * 0.052, wrist + arm * 0.070, 0.121, strap)
+        buckle = box("Buckle" + tag, wrist + arm * 0.061 + V3(0.0, 0.0, -0.060),
+                     (0.030, 0.022, 0.010), steel)
+        buckle.rotation_mode = 'QUATERNION'
+        buckle.rotation_quaternion = arm.to_track_quat('Y', 'Z')
+
+        # Build the palm in a real frame: local Y along the fingers, local Z along
+        # the palm face (pointing inward at the other hand). Euler angles cannot
+        # express "face the other hand" once the fingers also point forward.
+        fwd = (tip - palm).normalized()
+        face = mathutils.Vector((-sign, 0.0, 0.0))
+        # Positive tilt swings the palm face inward AND up, so the two hands cup
+        # the charge instead of both staring at the floor.
+        face.rotate(mathutils.Quaternion(V3(0.0, 1.0, 0.0),
+                                         math.radians(sign * inward)))
+        face.normalize()
+        side = fwd.cross(face).normalized()
+        basis = mathutils.Matrix((side, fwd, face)).transposed().to_quaternion()
+
+        thick = 0.044
+        p = box("Palm" + tag, palm, (0.100, 0.118, thick), leather)
+        p.rotation_mode = 'QUATERNION'
+        p.rotation_quaternion = basis
+        # Taper the heel of the palm so the hand narrows towards the wrist.
+        heel = box("Heel" + tag, palm - fwd * 0.062, (0.092, 0.055, thick * 0.86), leather)
+        heel.rotation_mode = 'QUATERNION'
+        heel.rotation_quaternion = basis
+
+        curl = (fwd + face * 0.40).normalized()
+        # Spread wider than the fingers are thick: gaps between digits are the
+        # other thing that makes a hand read as a hand.
+        knuckle = palm + curl * 0.052 + face * (thick * 0.5)
+        for i in range(4):
+            root = knuckle + side * ((i - 1.5) * 0.031)
+            spread = 1.0 - abs(i - 1.2) * 0.12
+            digit_dir = (curl + side * ((i - 1.5) * 0.07 * spread)).normalized()
+            # Middle finger longest, index and ring close, little finger short.
+            scale = (1.04, 1.10, 1.06, 0.88)[i]
+            at = finger("Finger%s%d" % (tag, i), root, digit_dir, face, scale)
+            limb("Tip%s%d" % (tag, i), at, at + digit_dir * 0.010, 0.017, worn)
+            ball("Knuckle%s%d" % (tag, i), root - face * 0.008, 0.016, worn, subdivisions=1)
+
+        # Thumb: two segments, swung well off the hand and lower than the fingers.
+        thumb = palm + side * (-sign * 0.066) + curl * 0.024
+        t1 = thumb + side * (-sign * 0.026) + face * 0.022 + fwd * 0.030
+        t2 = t1 + side * (-sign * 0.020) + face * 0.024 + fwd * 0.022
+        limb("Thumb%s0" % tag, thumb, t1, 0.030, leather)
+        limb("Thumb%s1" % tag, t1, t2, 0.026, leather)
+        ball("ThumbTip" + tag, t2, 0.016, worn, subdivisions=1)
+
+    # Hands kept close together (x ~ +/-0.15): spread them wider and they sit
+    # outside a 75-degree frustum at viewmodel range, leaving only a pair of
+    # sleeves poking into the bottom corners.
+    #
+    # Everything sits BELOW the origin, not above it. With the cut ends level
+    # with the eye the forearms enter frame from the upper corners and the whole
+    # thing reads as arms thrust out front -- walking-zombie posture. Hands held
+    # low, elbows down, is what fixes that.
+    right = (V3(0.23, 0.30, -0.03), V3(0.17, 0.02, -0.07),
+             V3(0.15, -0.10, -0.12), V3(0.14, -0.22, -0.16))
+    hand("R", right[0], right[1], right[2], right[3], 38.0)
+    left = (V3(-0.26, 0.33, -0.06), V3(-0.19, 0.07, -0.13),
+            V3(-0.16, -0.05, -0.17), V3(-0.15, -0.16, -0.21))
+    hand("L", left[0], left[1], left[2], left[3], 30.0)
+
+    # Stole tail on each forearm: the one bit of colour that identifies the
+    # caster when all you can see is a pair of hands.
+    for side, arm in ((1.0, right), (-1.0, left)):
+        box("Stole%d" % int(side),
+            arm[0].lerp(arm[1], 0.62) + V3(0.0, 0.0, -0.050),
+            (0.075, 0.19, 0.022), stole,
+            rot=(math.radians(12.0), math.radians(side * 14.0), 0.0))
+
+    # The charge itself is NOT modelled here. It lives in the game as a
+    # `ChargeOrb`, the same object the holy bolt is built from, hung between the
+    # palms at Viewmodel.ORB_AT. Modelling it twice is how the orb and the bolt
+    # would drift apart, and it puts a light effect in a file whose whole job is
+    # to be a pair of hands.
+
+    # --- orientation fix ---------------------------------------------------------
+    # Everything above is authored facing Blender -Y, exactly like the rest of
+    # the cast. The glTF exporter maps blender_z to Godot's up and blender_y to
+    # Godot's -forward, so that pose lands at Godot +Z -- i.e. BEHIND the camera.
+    # The world models get away with it because look_at() spins them at runtime,
+    # but a viewmodel is parented to the camera and never rotated, so it has to
+    # be authored the right way round.
+    #
+    # The flip has to happen about the WORLD origin, not each box's own centre:
+    # rotating a centred cube about itself changes nothing, and the pose lives in
+    # the box positions, not the box shapes. So bake location/rotation/scale into
+    # the mesh first, leaving every object origin at (0,0,0), then spin the
+    # vertex data.
+    bpy.ops.object.select_all(action='DESELECT')
+    meshes = [o for o in bpy.data.objects if o.type == 'MESH']
+    if not meshes:
+        return
+    for o in meshes:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = meshes[0]
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    flip = mathutils.Matrix.Rotation(math.pi, 4, 'Z')
+    for o in meshes:
+        o.data.transform(flip)
+
+    for o in bpy.data.objects:
+        if o.type == 'MESH':
+            apply_flat(o)
+    bpy.context.view_layer.update()
+    _report_bounds("viewmodel_arms")
+    export(os.path.join(OUT_DIR, "viewmodel_arms.glb"))
+
+
+def _report_bounds(name):
+    """Prints the mesh bounds in Blender axes. Cheap guard against silently
+    shipping a pose that is rotated the wrong way -- a viewmodel is never
+    rotated at runtime, so a bad export shows up as hands behind the camera."""
+    lo = [1e9] * 3
+    hi = [-1e9] * 3
+    for o in bpy.data.objects:
+        if o.type != 'MESH':
+            continue
+        for corner in o.bound_box:
+            w = o.matrix_world @ mathutils.Vector(corner)
+            for i in range(3):
+                lo[i] = min(lo[i], w[i])
+                hi[i] = max(hi[i], w[i])
+    print("[build_models] %s bounds x[%.2f,%.2f] y[%.2f,%.2f] z[%.2f,%.2f]" % (
+        name, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]))
+
+
 # --- entry point -------------------------------------------------------------
 
 def main():
@@ -431,6 +647,7 @@ def main():
     build_bomber()
     build_survivor()
     build_boss_director()
+    build_viewmodel()
     print("[build_models] done")
 
 

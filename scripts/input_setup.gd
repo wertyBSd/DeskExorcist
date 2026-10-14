@@ -26,6 +26,7 @@ func _enter_tree() -> void:
 	_bind_keys(&"move_right", [KEY_D, KEY_RIGHT])
 	_bind_keys(&"jump", [KEY_SPACE])
 	_bind_mouse(&"attack", MOUSE_BUTTON_LEFT)
+	_bind_mouse(&"cancel_cast", MOUSE_BUTTON_RIGHT)
 	_bind_keys(&"pause", [KEY_ESCAPE])
 	_bind_keys(&"restart", [KEY_R])
 	_bind_keys(&"debug_kill_all", [KEY_K])

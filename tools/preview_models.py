@@ -16,7 +16,7 @@ OUT = os.path.join(ROOT, "build", "preview.png")
 ORDER = [
     "exorcist.glb", "survivor.glb", "water_cooler.glb", "paperwork_phantom.glb",
     "email_wraith.glb", "enemy_runner.glb", "enemy_tank.glb", "enemy_bomber.glb",
-    "copier_portal.glb", "boss_director.glb",
+    "copier_portal.glb", "boss_director.glb", "viewmodel_arms.glb",
 ]
 # Normalise every model to a comparable display height so a 3 m boss and a
 # 1 m imp are both legible on the same sheet.

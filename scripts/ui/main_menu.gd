@@ -36,8 +36,15 @@ func _build() -> void:
 	_root.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_root)
 
+	var bg := TextureRect.new()
+	bg.texture = ArtLibrary.menu_background()
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(bg)
+
 	var dim := ColorRect.new()
-	dim.color = Color(0.05, 0.05, 0.08, 1.0)
+	dim.color = Color(0.05, 0.05, 0.08, 0.45)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(dim)
 

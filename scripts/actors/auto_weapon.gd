@@ -19,12 +19,20 @@ func _process(delta: float) -> void:
 
 ## Fires a holy bolt toward `aim_point`.  Called by the Player on left click.
 ## Cards can add extra bolts (a small spread fan) and piercing.
-func fire(aim_point: Vector3) -> void:
+##
+## `origin` is where the bolt appears -- the charge in the caster's palms, not
+## this node -- and the bolt is aimed from THERE at the aim point, not from the
+## eye. The eye and the hands are 10 cm and 37 cm apart, so firing parallel to
+## the crosshair from between them puts every shot a hand's width low; aiming
+## from the muzzle converges on the aim point instead, and the slight upward
+## tilt as it leaves the hands is what a shot out of a cupped palm looks like.
+func fire(aim_point: Vector3, origin := Vector3.INF) -> void:
 	if _cooldown > 0.0:
 		return
 	_cooldown = FIRE_COOLDOWN
 	EffectUtil.sound(get_tree(), &"bolt_fire", global_position)
-	var origin := global_position
+	if origin == Vector3.INF:
+		origin = global_position
 	var dir := aim_point - origin
 	if dir.length() <= 0.001:
 		dir = -global_transform.basis.z

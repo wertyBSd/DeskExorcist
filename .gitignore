@@ -18,3 +18,25 @@ Desktop.ini
 
 # Test runner output
 *.log
+
+# Godot leaves these behind when an import is interrupted mid-write.
+*.import*.tmp
+
+# Review strips rebuilt by tools/build_ui_art.py (not game assets)
+temp/ui_icons_*.png
+temp/ui_icons_*.png.import
+
+# Arena shots rendered by tools/room_preview.tscn (not game assets)
+temp/room_*.png
+temp/room_*.png.import
+
+# Splash shot rendered by tools/splash_preview.tscn (not a game asset)
+temp/splash.png
+temp/splash.png.import
+
+# HUD shots rendered by tools/hud_preview.tscn (not game assets)
+temp/hud_yaw_*.png
+temp/hud_yaw_*.png.import
+
+# Everything else under temp/ is a review render too, not a game asset.
+temp/

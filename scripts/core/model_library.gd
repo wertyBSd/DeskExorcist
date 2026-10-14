@@ -15,6 +15,9 @@ const PAPERWORK_PHANTOM := DIR + "paperwork_phantom.glb"
 const EMAIL_WRAITH := DIR + "email_wraith.glb"
 const COPIER_PORTAL := DIR + "copier_portal.glb"
 const NPC := DIR + "survivor.glb"
+## First-person casting hands. Not a world actor: see Viewmodel, which parents
+## it to the camera and instantiates it ungrounded and unscaled.
+const VIEWMODEL_ARMS := DIR + "viewmodel_arms.glb"
 ## E1 archetypes and the run finale, built by tools/build_models.py.
 const WIRE_RUNNER := DIR + "enemy_runner.glb"
 const FILING_CABINET_TANK := DIR + "enemy_tank.glb"
@@ -28,7 +31,14 @@ static func has_model(path: String) -> bool:
 ## Instantiates `path`, scales it so its tallest axis equals `target_height`
 ## metres, and drops its feet onto y = 0.  Returns the instance (caller adds it
 ## to the tree) or null when the asset is unavailable.
-static func instantiate(path: String, target_height: float = 0.0) -> Node3D:
+##
+## `ground` must be false for anything that is NOT a world actor: a first-person
+## viewmodel is authored in place (shoulders at the origin, hands forward) and
+## has to keep that offset, because the viewmodel node is what positions it
+## relative to the camera. Grounding would shove the whole pose up by the height
+## of the arms and put the hands behind the viewer.
+static func instantiate(path: String, target_height: float = 0.0,
+		ground: bool = true) -> Node3D:
 	if not ResourceLoader.exists(path):
 		return null
 	var packed := load(path) as PackedScene
@@ -37,23 +47,26 @@ static func instantiate(path: String, target_height: float = 0.0) -> Node3D:
 	var root := packed.instantiate() as Node3D
 	if root == null:
 		return null
-	_normalise(root, target_height)
+	_normalise(root, target_height, ground)
 	return root
 
 ## Adds a model under `parent`; returns it, or null when unavailable.
-static func attach(parent: Node3D, path: String, target_height: float = 0.0) -> Node3D:
-	var model := instantiate(path, target_height)
+static func attach(parent: Node3D, path: String, target_height: float = 0.0,
+		ground: bool = true) -> Node3D:
+	var model := instantiate(path, target_height, ground)
 	if model != null:
 		parent.add_child(model)
 	return model
 
 ## Scales + grounds a freshly instantiated model using its mesh bounds.
-static func _normalise(root: Node3D, target_height: float) -> void:
+static func _normalise(root: Node3D, target_height: float, ground: bool = true) -> void:
 	var bounds := _mesh_bounds(root)
 	if bounds.size.y > 0.001 and target_height > 0.0:
 		var factor := target_height / bounds.size.y
 		root.scale = root.scale * factor
 		bounds = _mesh_bounds(root)
+	if not ground:
+		return
 	# Push the model up so its lowest point rests on the ground plane.
 	root.position.y -= bounds.position.y
 
